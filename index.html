@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Davis Order</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --primary:#000; --surface:#f8f9ff; --card:#fff; --muted:#777; --done:#1a7f37; --warn:#b45309; --outline:#e2e5e9; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:Inter,-apple-system,sans-serif; background:var(--surface); color:#0b1c30; -webkit-font-smoothing:antialiased; padding-bottom:70px; }
+  header { background:#000; color:#fff; padding:18px 16px 14px; }
+  header h1 { font-family:Manrope,sans-serif; font-weight:800; font-size:1.3rem; margin:0; }
+  header .who { font-size:12px; color:#cfd2d6; margin-top:4px; }
+  .tabs { display:flex; position:sticky; top:0; background:#fff; z-index:5; box-shadow:0 1px 0 var(--outline); }
+  .tabs button { flex:1; border:none; background:none; padding:12px; font-size:14px; font-weight:700; color:#999; }
+  .tabs button.active { color:#000; border-bottom:3px solid #000; }
+  #list { padding:12px; max-width:520px; margin:0 auto; }
+  .empty { text-align:center; padding:60px 20px; color:var(--muted); }
+  .card { background:var(--card); border-radius:14px; padding:16px 18px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .card .id { font-size:11px; letter-spacing:.06em; color:var(--muted); font-weight:700; }
+  .card .title { font-size:16px; font-weight:700; margin-top:2px; }
+  .card .items { font-size:13px; color:var(--muted); margin-top:6px; white-space:pre-wrap; }
+  .stages { display:flex; align-items:center; margin-top:14px; }
+  .stage { flex:1; text-align:center; position:relative; }
+  .stage .dot { width:22px; height:22px; border-radius:50%; background:var(--outline); color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; margin:0 auto; }
+  .stage.done .dot { background:var(--done); }
+  .stage.current .dot { background:#000; box-shadow:0 0 0 4px rgba(0,0,0,.12); }
+  .stage .line { position:absolute; top:11px; left:-50%; width:100%; height:2px; background:var(--outline); z-index:-1; }
+  .stage.done .line, .stage.current .line { background:var(--done); }
+  .stage:first-child .line { display:none; }
+  .stage label { display:block; font-size:10px; margin-top:6px; color:var(--muted); line-height:1.3; }
+  .stage.current label { color:#000; font-weight:700; }
+  .actionBtn { margin-top:14px; width:100%; min-height:44px; border:none; border-radius:10px; font-weight:700; font-size:14px; background:#000; color:#fff; }
+  .actionBtn.green { background:var(--done); }
+  .actionBtn[disabled] { opacity:.5; }
+  .miniform { margin-top:12px; border-top:1px solid var(--outline); padding-top:12px; display:none; }
+  .miniform.open { display:block; }
+  .miniform label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:700; margin-top:10px; }
+  .miniform input, .miniform select { width:100%; min-height:42px; padding:8px 10px; margin-top:4px; border:1px solid var(--outline); border-radius:8px; font-size:15px; }
+  .miniform .err { color:#c0392b; font-size:12px; margin-top:8px; }
+  #boot { text-align:center; padding:80px 20px; color:var(--muted); }
+  #lastUpdated { text-align:center; font-size:11px; color:var(--muted); padding:10px; }
+</style>
+</head>
+<body>
+
+<div id="boot">กำลังเชื่อมต่อ LINE...</div>
+
+<div id="app" style="display:none">
+  <header>
+    <h1>🛎️ Davis Order</h1>
+    <div class="who" id="whoLine"></div>
+  </header>
+  <div class="tabs">
+    <button id="tabMine" class="active">ของฉัน</button>
+    <button id="tabAll">ทั้งหมด</button>
+  </div>
+  <div id="list"></div>
+  <p id="lastUpdated"></p>
+</div>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+  // ---- fill these two in before publishing ----
+  var LIFF_ID = 'YOUR_LIFF_ID_HERE';
+  var API_URL = 'https://script.google.com/macros/s/AKfycbwW4Cx0k-hmBcRxcaFy_2RPJO8jwfr9T7vfOnCp4u4aUZNn2A6mFgTkVWk8u_TGkdO0UA/exec';
+  // ----------------------------------------------
+
+  var STAGE_LABELS = ['รอร้านรับ', 'เตรียมอาหาร', 'กำลังจัดส่ง', 'ส่งมอบแล้ว'];
+  var idToken = '';
+  var me = null;
+  var currentTab = 'mine';
+  var allRows = [];
+  var openForms = {}; // orderId -> true while its inline form is open
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  /**
+   * Calls the whitelist dispatcher in order-liff-api.js. text/plain avoids a
+   * CORS preflight (Apps Script has no doOptions) — see that file's header
+   * comment for the full reasoning.
+   */
+  function callApi(fn, payload) {
+    return fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ liffCall: true, fn: fn, payload: payload || {} }),
+    }).then(function (r) { return r.json(); });
+  }
+
+  function stagesHtml(currentStage) {
+    return '<div class="stages">' + STAGE_LABELS.map(function (label, i) {
+      var cls = i < currentStage ? 'done' : (i === currentStage ? 'current' : '');
+      var icon = i < currentStage ? '✓' : (i + 1);
+      return '<div class="stage ' + cls + '"><div class="line"></div><div class="dot">' + icon + '</div><label>' + label + '</label></div>';
+    }).join('') + '</div>';
+  }
+
+  // ---- Photo picker: shrink to a reasonable size before base64-encoding, same reasoning as photo-input.html on the Apps Script side ----
+  function shrinkPhoto(file, done) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        var scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        done(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.onerror = function () { done(reader.result); };
+      img.src = reader.result;
+    };
+    reader.onerror = function () { done(null); };
+    reader.readAsDataURL(file);
+  }
+
+  function actionSectionHtml(row) {
+    if (row.stage === 3) return '';
+    if (row.stage === 0) {
+      return '<button class="actionBtn" onclick="doClaim(\'' + row.orderId + '\')">รับออเดอร์</button>';
+    }
+    if (row.stage === 1 && row.is24) {
+      return miniFormHtml(row.orderId, '🍳 รับอาหาร (ถ่ายรูปบิล)', 'submitFood');
+    }
+    if (row.stage === 1 && !row.is24) {
+      return miniFormHtml(row.orderId, '✅ ส่งแล้ว (แนบบิล)', 'submitDeliverForm');
+    }
+    if (row.stage === 2 && row.is24) {
+      return '<button class="actionBtn green" onclick="doComplete(\'' + row.orderId + '\')">✅ ส่งมอบให้ลูกค้า</button>';
+    }
+    return '';
+  }
+
+  function miniFormHtml(orderId, label, submitFnName) {
+    var open = !!openForms[orderId];
+    return '<button class="actionBtn green" onclick="toggleForm(\'' + orderId + '\')">' + label + '</button>' +
+      '<div class="miniform' + (open ? ' open' : '') + '" id="form-' + orderId + '">' +
+      '<label>ยอดเงินจริง</label><input type="number" inputmode="decimal" id="amt-' + orderId + '" placeholder="เช่น 350" />' +
+      '<label>Payment</label><select id="pay-' + orderId + '"><option value="Room Charge">Room Charge</option><option value="Cash">Cash</option><option value="Card">Card</option></select>' +
+      '<label>รูปบิล</label><input type="file" accept="image/*" id="photo-' + orderId + '" />' +
+      '<button class="actionBtn" style="margin-top:10px" onclick="' + submitFnName + '(\'' + orderId + '\')">บันทึก</button>' +
+      '<div class="err" id="err-' + orderId + '"></div>' +
+      '</div>';
+  }
+
+  function toggleForm(orderId) {
+    openForms[orderId] = !openForms[orderId];
+    render();
+  }
+
+  function render() {
+    var rows = allRows.filter(function (r) {
+      if (currentTab === 'all') return true;
+      return r.stage < 3 && (!r.assignedUserId || r.assignedUserId === me.userId);
+    });
+    var list = document.getElementById('list');
+    if (rows.length === 0) {
+      list.innerHTML = '<div class="empty">' + (currentTab === 'mine' ? 'ไม่มีออเดอร์ที่ต้องจัดการตอนนี้' : 'ไม่มีออเดอร์ที่กำลังดำเนินการ') + '</div>';
+      return;
+    }
+    list.innerHTML = rows.map(function (r) {
+      var title = r.isSell ? (esc(r.buyer) + ' สั่งจาก ' + esc(r.seller)) : esc(r.seller);
+      return '<div class="card">' +
+        '<div class="id">' + esc(r.orderId) + '</div>' +
+        '<div class="title">' + title + '</div>' +
+        '<div style="font-size:12px;color:var(--muted)">' + esc(r.subtitle) + '</div>' +
+        '<div class="items">' + esc(r.items) + '</div>' +
+        stagesHtml(r.stage) +
+        actionSectionHtml(r) +
+        '</div>';
+    }).join('');
+  }
+
+  function refresh() {
+    callApi('listOrderStatusRows', { requestGroupId: '' }).then(function (rows) {
+      allRows = rows;
+      render();
+      document.getElementById('lastUpdated').textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH');
+    });
+  }
+
+  function doClaim(orderId) {
+    callApi('claimOrderViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
+      if (!r.ok) { alert(r.reason || r.error || 'ผิดพลาด'); return; }
+      refresh();
+    });
+  }
+
+  function doComplete(orderId) {
+    callApi('completeOrderDeliveryViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
+      if (!r.ok) { alert(r.reason || r.error || 'ผิดพลาด'); return; }
+      refresh();
+    });
+  }
+
+  function submitWithPhoto(orderId, fn) {
+    var amount = document.getElementById('amt-' + orderId).value;
+    var payment = document.getElementById('pay-' + orderId).value;
+    var fileInput = document.getElementById('photo-' + orderId);
+    var errEl = document.getElementById('err-' + orderId);
+    errEl.textContent = '';
+    if (!amount) { errEl.textContent = 'กรอกยอดเงินก่อน'; return; }
+    if (!fileInput.files[0]) { errEl.textContent = 'แนบรูปบิลก่อน'; return; }
+    errEl.textContent = 'กำลังส่ง...';
+    shrinkPhoto(fileInput.files[0], function (dataUrl) {
+      callApi(fn, {
+        idToken: idToken, ticketId: orderId,
+        amount: amount, payment: payment,
+        photoDataUrls: dataUrl ? [dataUrl] : [],
+      }).then(function (r) {
+        if (!r.ok) { errEl.textContent = r.error || 'ผิดพลาด'; return; }
+        openForms[orderId] = false;
+        refresh();
+      });
+    });
+  }
+  function submitFood(orderId) { submitWithPhoto(orderId, 'submitOrderFoodForm'); }
+  function submitDeliverForm(orderId) { submitWithPhoto(orderId, 'submitOrderFulfillForm'); }
+
+  document.getElementById('tabMine').addEventListener('click', function () {
+    currentTab = 'mine';
+    document.getElementById('tabMine').classList.add('active');
+    document.getElementById('tabAll').classList.remove('active');
+    render();
+  });
+  document.getElementById('tabAll').addEventListener('click', function () {
+    currentTab = 'all';
+    document.getElementById('tabAll').classList.add('active');
+    document.getElementById('tabMine').classList.remove('active');
+    render();
+  });
+
+  liff.init({ liffId: LIFF_ID }).then(function () {
+    idToken = liff.getIDToken() || '';
+    if (!idToken) {
+      document.getElementById('boot').textContent = 'เปิดหน้านี้จากปุ่มในไลน์เท่านั้น (ไม่พบ ID token)';
+      return;
+    }
+    return callApi('whoAmIViaLiff', { idToken: idToken });
+  }).then(function (whoami) {
+    if (!whoami || !whoami.userId) {
+      document.getElementById('boot').textContent = 'ยืนยันตัวตนไม่สำเร็จ — เปิดจากปุ่มในไลน์ใหม่อีกครั้ง';
+      return;
+    }
+    me = whoami;
+    document.getElementById('boot').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    document.getElementById('whoLine').textContent = me.actorName + ' (' + me.role + ')';
+    refresh();
+    setInterval(refresh, 10000);
+  }).catch(function (err) {
+    document.getElementById('boot').textContent = 'เปิดไม่สำเร็จ: ' + err;
+  });
+</script>
+</body>
+</html>
