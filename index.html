@@ -57,6 +57,8 @@
   #toast { position:fixed; left:16px; right:16px; bottom:16px; background:#000; color:#fff; padding:12px 16px; border-radius:10px; font-size:14px; text-align:center; transform:translateY(120%); transition:transform .25s; z-index:20; }
   #toast.show { transform:translateY(0); }
   #toast.err { background:#c0392b; }
+  #scopeBanner { max-width:520px; margin:12px auto 0; padding:10px 14px; background:#FEF3C7; color:#92400E; border-radius:10px; font-size:13px; font-weight:600; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  #scopeBanner a { color:#92400E; font-weight:800; white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -81,6 +83,7 @@
     <button id="tabAll">ทั้งหมด</button>
     <button id="tabSummary">สรุปเดือนนี้</button>
   </div>
+  <div id="scopeBanner" style="display:none"></div>
   <div id="list"></div>
   <p id="lastUpdated"></p>
 </div>
@@ -111,7 +114,27 @@
     }).then(function (r) { return r.json(); });
   }
 
-  var firstBoard = callApi('listOrderStatusRows', { requestGroupId: '' });
+  /**
+   * Opening ".../<liffId>?group=REQ_x" scopes the page to one request — the
+   * "ดูทั้งคำขอ" button on a multi-shop order card. LIFF sometimes has to
+   * redirect, and then it hands the original query over inside `liff.state`
+   * instead, so read both forms. Done here (not after liff.init) because the
+   * board request below is fired before the SDK has even loaded.
+   */
+  function readGroupParam() {
+    var q = new URLSearchParams(location.search);
+    var direct = q.get('group');
+    if (direct) return direct;
+    var state = q.get('liff.state');
+    if (state) {
+      var m = /[?&]group=([^&]+)/.exec(decodeURIComponent(state));
+      if (m) return decodeURIComponent(m[1]);
+    }
+    return '';
+  }
+  var REQUEST_GROUP = readGroupParam();
+
+  var firstBoard = callApi('listOrderStatusRows', { requestGroupId: REQUEST_GROUP });
   firstBoard.catch(function () {}); // handled by refresh(); this only silences the unhandled-rejection warning
 </script>
 
@@ -269,7 +292,7 @@
     refreshing = true;
     // Consume the in-flight request that was started during page parse rather
     // than issuing a second identical one.
-    var pending = firstBoard || callApi('listOrderStatusRows', { requestGroupId: '' });
+    var pending = firstBoard || callApi('listOrderStatusRows', { requestGroupId: REQUEST_GROUP });
     firstBoard = null;
     pending.then(function (rows) {
       allRows = rows;
@@ -413,6 +436,17 @@
   function showApp() {
     document.getElementById('boot').style.display = 'none';
     document.getElementById('app').style.display = 'block';
+    if (REQUEST_GROUP) {
+      // Scoped to one request: "ต้องทำ" would hide the shops already handled,
+      // which is the opposite of what someone following their own order wants.
+      currentTab = 'all';
+      document.getElementById('tabMine').classList.remove('active');
+      document.getElementById('tabAll').classList.add('active');
+      var banner = document.getElementById('scopeBanner');
+      banner.innerHTML = '<span>📦 กำลังดูเฉพาะคำขอ ' + esc(REQUEST_GROUP) + '</span>' +
+        '<a href="' + esc(location.pathname) + '">ดูทั้งหมด</a>';
+      banner.style.display = 'flex';
+    }
     render();
   }
 
