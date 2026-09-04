@@ -4,80 +4,99 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Davis Order</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- The API host is the one thing every screen waits on — get DNS/TLS out of
+     the way while the HTML is still parsing. -->
+<link rel="preconnect" href="https://script.google.com" crossorigin>
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
+<link rel="preconnect" href="https://static.line-scdn.net" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Loaded non-blocking: a webfont must never hold up first paint on a phone
+     on hotel wifi. The system stack below renders immediately and Inter swaps
+     in when it arrives. -->
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
   :root { --primary:#000; --surface:#f8f9ff; --card:#fff; --muted:#777; --done:#1a7f37; --warn:#b45309; --outline:#e2e5e9; }
   * { box-sizing: border-box; }
   body { margin:0; font-family:Inter,-apple-system,sans-serif; background:var(--surface); color:#0b1c30; -webkit-font-smoothing:antialiased; padding-bottom:70px; }
-  header { background:#000; color:#fff; padding:18px 16px 14px; }
-  header h1 { font-family:Manrope,sans-serif; font-weight:800; font-size:1.3rem; margin:0; }
-  header .who { font-size:12px; color:#cfd2d6; margin-top:4px; }
-  .tabs { display:flex; position:sticky; top:0; background:#fff; z-index:5; box-shadow:0 1px 0 var(--outline); }
+  header { background:#000; color:#fff; padding:16px 16px 12px; position:sticky; top:0; z-index:6; }
+  header h1 { font-weight:800; font-size:1.2rem; margin:0; }
+  header .who { font-size:12px; color:#cfd2d6; margin-top:3px; min-height:15px; }
+  header .headRow { display:flex; align-items:center; gap:12px; }
+  header #avatar { width:42px; height:42px; border-radius:50%; object-fit:cover; background:#333; display:none; }
+  .nudgeBtn { margin-top:8px; width:100%; min-height:38px; border:1px solid var(--outline); border-radius:10px; background:#fff; color:#000; font-size:13px; font-weight:600; }
+  .sumRow { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--outline); font-size:14px; }
+  .sumRow:last-child { border-bottom:none; }
+  .sumTotal { display:flex; justify-content:space-between; padding:14px 0 0; font-weight:800; font-size:16px; }
+  .tabs { display:flex; position:sticky; top:56px; background:#fff; z-index:5; box-shadow:0 1px 0 var(--outline); }
   .tabs button { flex:1; border:none; background:none; padding:12px; font-size:14px; font-weight:700; color:#999; }
   .tabs button.active { color:#000; border-bottom:3px solid #000; }
   #list { padding:12px; max-width:520px; margin:0 auto; }
   .empty { text-align:center; padding:60px 20px; color:var(--muted); }
-  .card { background:var(--card); border-radius:14px; padding:16px 18px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .card { background:var(--card); border-radius:14px; padding:16px 18px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .card.skeleton { color:transparent; }
+  .card.skeleton * { background:#eceef1; border-radius:6px; color:transparent !important; animation:pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
   .card .id { font-size:11px; letter-spacing:.06em; color:var(--muted); font-weight:700; }
   .card .title { font-size:16px; font-weight:700; margin-top:2px; }
   .card .items { font-size:13px; color:var(--muted); margin-top:6px; white-space:pre-wrap; }
-  .stages { display:flex; align-items:center; margin-top:14px; }
-  .stage { flex:1; text-align:center; position:relative; }
-  .stage .dot { width:22px; height:22px; border-radius:50%; background:var(--outline); color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; margin:0 auto; }
-  .stage.done .dot { background:var(--done); }
-  .stage.current .dot { background:#000; box-shadow:0 0 0 4px rgba(0,0,0,.12); }
-  .stage .line { position:absolute; top:11px; left:-50%; width:100%; height:2px; background:var(--outline); z-index:-1; }
-  .stage.done .line, .stage.current .line { background:var(--done); }
-  .stage:first-child .line { display:none; }
-  .stage label { display:block; font-size:10px; margin-top:6px; color:var(--muted); line-height:1.3; }
-  .stage.current label { color:#000; font-weight:700; }
-  .actionBtn { margin-top:14px; width:100%; min-height:44px; border:none; border-radius:10px; font-weight:700; font-size:14px; background:#000; color:#fff; }
+  .progress { margin-top:14px; }
+  .progress .track { height:6px; border-radius:3px; background:var(--outline); overflow:hidden; }
+  .progress .fill { height:100%; background:var(--done); border-radius:3px; transition:width .3s; }
+  .progress .label { display:flex; justify-content:space-between; margin-top:6px; font-size:11px; color:var(--muted); }
+  .progress .label b { color:#000; font-weight:700; }
+  .actionBtn { margin-top:14px; width:100%; min-height:46px; border:none; border-radius:10px; font-weight:700; font-size:14px; background:#000; color:#fff; transition:opacity .15s; }
   .actionBtn.green { background:var(--done); }
-  .actionBtn[disabled] { opacity:.5; }
+  .actionBtn[disabled] { opacity:.55; }
   .miniform { margin-top:12px; border-top:1px solid var(--outline); padding-top:12px; display:none; }
   .miniform.open { display:block; }
   .miniform label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:700; margin-top:10px; }
-  .miniform input, .miniform select { width:100%; min-height:42px; padding:8px 10px; margin-top:4px; border:1px solid var(--outline); border-radius:8px; font-size:15px; }
-  .miniform .err { color:#c0392b; font-size:12px; margin-top:8px; }
+  .miniform input, .miniform select { width:100%; min-height:44px; padding:8px 10px; margin-top:4px; border:1px solid var(--outline); border-radius:8px; font-size:16px; }
+  .miniform .err { color:#c0392b; font-size:12px; margin-top:8px; min-height:16px; }
   #boot { text-align:center; padding:80px 20px; color:var(--muted); }
   #lastUpdated { text-align:center; font-size:11px; color:var(--muted); padding:10px; }
+  #toast { position:fixed; left:16px; right:16px; bottom:16px; background:#000; color:#fff; padding:12px 16px; border-radius:10px; font-size:14px; text-align:center; transform:translateY(120%); transition:transform .25s; z-index:20; }
+  #toast.show { transform:translateY(0); }
+  #toast.err { background:#c0392b; }
 </style>
 </head>
 <body>
 
-<div id="boot">กำลังเชื่อมต่อ LINE...</div>
+<div id="boot">
+  <div style="font-size:32px">🛎️</div>
+  <div style="margin-top:8px">กำลังเชื่อมต่อ LINE...</div>
+</div>
 
 <div id="app" style="display:none">
   <header>
-    <h1>🛎️ Davis Order</h1>
-    <div class="who" id="whoLine"></div>
+    <div class="headRow">
+      <img id="avatar" alt="" />
+      <div>
+        <h1>🛎️ Davis Order</h1>
+        <div class="who" id="whoLine"></div>
+      </div>
+    </div>
   </header>
   <div class="tabs">
-    <button id="tabMine" class="active">ของฉัน</button>
+    <button id="tabMine" class="active">ต้องทำ</button>
     <button id="tabAll">ทั้งหมด</button>
+    <button id="tabSummary">สรุปเดือนนี้</button>
   </div>
   <div id="list"></div>
   <p id="lastUpdated"></p>
 </div>
 
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<div id="toast"></div>
+
+<!-- THIS BLOCK MUST STAY ABOVE THE LIFF SDK TAG. A classic <script src> blocks
+     parsing, so anything below it waits for the SDK to download before it can
+     even start. The order board needs no LINE identity, so its request is
+     issued here instead — it flies while the SDK is still downloading and is
+     usually already answered by the time liff.init() resolves. -->
 <script>
   // ---- fill these two in before publishing ----
   var LIFF_ID = '2011319750-tMh303eW';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
-
-  var STAGE_LABELS = ['รอร้านรับ', 'เตรียมอาหาร', 'กำลังจัดส่ง', 'ส่งมอบแล้ว'];
-  var idToken = '';
-  var me = null;
-  var currentTab = 'mine';
-  var allRows = [];
-  var openForms = {}; // orderId -> true while its inline form is open
-
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
 
   /**
    * Calls the whitelist dispatcher in order-liff-api.js. text/plain avoids a
@@ -92,12 +111,47 @@
     }).then(function (r) { return r.json(); });
   }
 
-  function stagesHtml(currentStage) {
-    return '<div class="stages">' + STAGE_LABELS.map(function (label, i) {
-      var cls = i < currentStage ? 'done' : (i === currentStage ? 'current' : '');
-      var icon = i < currentStage ? '✓' : (i + 1);
-      return '<div class="stage ' + cls + '"><div class="line"></div><div class="dot">' + icon + '</div><label>' + label + '</label></div>';
-    }).join('') + '</div>';
+  var firstBoard = callApi('listOrderStatusRows', { requestGroupId: '' });
+  firstBoard.catch(function () {}); // handled by refresh(); this only silences the unhandled-rejection warning
+</script>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+
+  var STAGE_LABELS = ['รอร้านรับ', 'เตรียมอาหาร', 'กำลังจัดส่ง', 'ส่งมอบแล้ว'];
+  var idToken = '';
+  var me = null;
+  var currentTab = 'mine';
+  var allRows = null; // null = never loaded yet (shows skeleton, not "empty")
+  var summary = null; // month-to-date totals, loaded lazily when the tab is opened
+  var openForms = {}; // orderId -> true while its inline form is open
+  var refreshing = false; // guards against overlapping poll ticks piling up
+  var toastTimer = null;
+  var lastPayload = ''; // last board JSON — skip the repaint when nothing moved
+  var pollTimer = null;
+
+  // callApi() and firstBoard are declared in the block above the SDK tag.
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function toast(msg, isErr) {
+    var el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = isErr ? 'err show' : 'show';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove('show'); }, 3200);
+  }
+
+  // A single slim bar + "N/4 · label" line reads faster on a phone than four
+  // dot-and-caption columns, and leaves more room for the action button below.
+  function progressHtml(stage) {
+    var pct = Math.round((stage / 3) * 100);
+    return '<div class="progress">' +
+      '<div class="track"><div class="fill" style="width:' + pct + '%"></div></div>' +
+      '<div class="label"><span>ขั้น ' + (stage + 1) + '/4</span><b>' + STAGE_LABELS[stage] + '</b></div>' +
+      '</div>';
   }
 
   // ---- Photo picker: shrink to a reasonable size before base64-encoding, same reasoning as photo-input.html on the Apps Script side ----
@@ -123,7 +177,7 @@
   function actionSectionHtml(row) {
     if (row.stage === 3) return '';
     if (row.stage === 0) {
-      return '<button class="actionBtn" onclick="doClaim(\'' + row.orderId + '\')">รับออเดอร์</button>';
+      return '<button class="actionBtn" id="btn-' + row.orderId + '" onclick="doClaim(\'' + row.orderId + '\')">รับออเดอร์</button>';
     }
     if (row.stage === 1 && row.is24) {
       return miniFormHtml(row.orderId, '🍳 รับอาหาร (ถ่ายรูปบิล)', 'submitFood');
@@ -132,36 +186,63 @@
       return miniFormHtml(row.orderId, '✅ ส่งแล้ว (แนบบิล)', 'submitDeliverForm');
     }
     if (row.stage === 2 && row.is24) {
-      return '<button class="actionBtn green" onclick="doComplete(\'' + row.orderId + '\')">✅ ส่งมอบให้ลูกค้า</button>';
+      return '<button class="actionBtn green" id="btn-' + row.orderId + '" onclick="doComplete(\'' + row.orderId + '\')">✅ ส่งมอบให้ลูกค้า</button>';
     }
     return '';
   }
 
   function miniFormHtml(orderId, label, submitFnName) {
     var open = !!openForms[orderId];
-    return '<button class="actionBtn green" onclick="toggleForm(\'' + orderId + '\')">' + label + '</button>' +
+    return '<button class="actionBtn green" id="btn-' + orderId + '" onclick="toggleForm(\'' + orderId + '\')">' + label + '</button>' +
       '<div class="miniform' + (open ? ' open' : '') + '" id="form-' + orderId + '">' +
       '<label>ยอดเงินจริง</label><input type="number" inputmode="decimal" id="amt-' + orderId + '" placeholder="เช่น 350" />' +
       '<label>Payment</label><select id="pay-' + orderId + '"><option value="Room Charge">Room Charge</option><option value="Cash">Cash</option><option value="Card">Card</option></select>' +
-      '<label>รูปบิล</label><input type="file" accept="image/*" id="photo-' + orderId + '" />' +
-      '<button class="actionBtn" style="margin-top:10px" onclick="' + submitFnName + '(\'' + orderId + '\')">บันทึก</button>' +
+      '<label>รูปบิล</label><input type="file" accept="image/*" capture="environment" id="photo-' + orderId + '" />' +
+      '<button class="actionBtn" style="margin-top:10px" id="submit-' + orderId + '" onclick="' + submitFnName + '(\'' + orderId + '\')">บันทึก</button>' +
       '<div class="err" id="err-' + orderId + '"></div>' +
       '</div>';
   }
 
+  /** Opening one card's form closes any other open one — one decision on screen at a time, not a wall of forms. */
   function toggleForm(orderId) {
-    openForms[orderId] = !openForms[orderId];
+    var wasOpen = !!openForms[orderId];
+    openForms = {};
+    openForms[orderId] = !wasOpen;
     render();
   }
 
+  function skeletonCards() {
+    var one = '<div class="card skeleton"><div class="id">ORD_20260101_01</div>' +
+      '<div class="title">กำลังโหลด...</div><div class="items">กำลังโหลดรายการ...</div></div>';
+    return one + one + one;
+  }
+
+  function renderSummary() {
+    var list = document.getElementById('list');
+    if (!summary) { list.innerHTML = skeletonCards(); return; }
+    if (summary.rows.length === 0) {
+      list.innerHTML = '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วในเดือนนี้</div>';
+      return;
+    }
+    list.innerHTML = '<div class="card"><div class="id">สรุปเดือน ' + esc(summary.monthKey) + '</div>' +
+      summary.rows.map(function (r) {
+        return '<div class="sumRow"><span>' + esc(r.seller) + ' → ' + esc(r.buyer) + ' <span style="color:var(--muted)">(' + r.count + ' ออเดอร์)</span></span>' +
+          '<b>' + Number(r.amount).toLocaleString('en-US') + '</b></div>';
+      }).join('') +
+      '<div class="sumTotal"><span>รวมทั้งหมด</span><span>' + Number(summary.grandTotal).toLocaleString('en-US') + ' บาท</span></div>' +
+      '</div>';
+  }
+
   function render() {
+    var list = document.getElementById('list');
+    if (currentTab === 'summary') { renderSummary(); return; }
+    if (allRows === null) { list.innerHTML = skeletonCards(); return; }
     var rows = allRows.filter(function (r) {
       if (currentTab === 'all') return true;
-      return r.stage < 3 && (!r.assignedUserId || r.assignedUserId === me.userId);
+      return r.stage < 3 && (!r.assignedUserId || (me && r.assignedUserId === me.userId));
     });
-    var list = document.getElementById('list');
     if (rows.length === 0) {
-      list.innerHTML = '<div class="empty">' + (currentTab === 'mine' ? 'ไม่มีออเดอร์ที่ต้องจัดการตอนนี้' : 'ไม่มีออเดอร์ที่กำลังดำเนินการ') + '</div>';
+      list.innerHTML = '<div class="empty">' + (currentTab === 'mine' ? '🎉 ไม่มีออเดอร์ที่ต้องทำตอนนี้' : 'ไม่มีออเดอร์ที่กำลังดำเนินการ') + '</div>';
       return;
     }
     list.innerHTML = rows.map(function (r) {
@@ -171,31 +252,100 @@
         '<div class="title">' + title + '</div>' +
         '<div style="font-size:12px;color:var(--muted)">' + esc(r.subtitle) + '</div>' +
         '<div class="items">' + esc(r.items) + '</div>' +
-        stagesHtml(r.stage) +
+        progressHtml(r.stage) +
         actionSectionHtml(r) +
+        // ขุนทอง's "ส่งบิลเข้ากลุ่มหน่อย", for orders: nudge the shop's manager
+        // right now instead of waiting for the 25-minute auto-escalation.
+        (r.stage < 3 ? '<button class="nudgeBtn" id="nudge-' + r.orderId + '" onclick="doNudge(\'' + r.orderId + '\')">🔔 เตือนผู้จัดการร้าน</button>' : '') +
         '</div>';
     }).join('');
   }
 
+  /** Skips a tick rather than queuing — a slow poll response and the next
+   * timer firing at the same time is what made the page feel sluggish
+   * (requests piling up in flight, each one racing to repaint last). */
   function refresh() {
-    callApi('listOrderStatusRows', { requestGroupId: '' }).then(function (rows) {
+    if (refreshing) return;
+    refreshing = true;
+    // Consume the in-flight request that was started during page parse rather
+    // than issuing a second identical one.
+    var pending = firstBoard || callApi('listOrderStatusRows', { requestGroupId: '' });
+    firstBoard = null;
+    pending.then(function (rows) {
       allRows = rows;
-      render();
+      // Re-rendering identical data throws away every open form's typed
+      // amount and re-decodes the same HTML — repaint only on a real change.
+      var payload = JSON.stringify(rows);
+      if (payload !== lastPayload) { lastPayload = payload; render(); }
       document.getElementById('lastUpdated').textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH');
+    }).catch(function () {
+      document.getElementById('lastUpdated').textContent = 'อัปเดตไม่สำเร็จ ลองใหม่ในไม่ช้า';
+    }).finally(function () { refreshing = false; });
+  }
+
+  /** A write just landed — the next poll must repaint even if the shape looks similar. */
+  function forceRefresh() {
+    lastPayload = '';
+    refresh();
+  }
+
+  // Polling only runs while the page is actually on screen. The old version
+  // kept a 10s timer alive in the background: every minute a backgrounded
+  // webview burned six pointless round trips, and coming back to the app meant
+  // waiting behind that queue.
+  function startPolling() {
+    stopPolling();
+    pollTimer = setInterval(function () {
+      if (document.visibilityState !== 'visible') return;
+      if (currentTab === 'summary') return;
+      refresh();
+    }, 10000);
+  }
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  function withButtonBusy(orderId, label, fn) {
+    var btn = document.getElementById(orderId);
+    if (btn) { btn.disabled = true; btn.dataset.orig = btn.textContent; btn.textContent = label; }
+    return fn().finally(function () {
+      if (btn) { btn.disabled = false; btn.textContent = btn.dataset.orig || btn.textContent; }
     });
   }
 
   function doClaim(orderId) {
-    callApi('claimOrderViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
-      if (!r.ok) { alert(r.reason || r.error || 'ผิดพลาด'); return; }
-      refresh();
+    withButtonBusy('btn-' + orderId, 'กำลังรับ...', function () {
+      return callApi('claimOrderViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
+        if (!r.ok) { toast(r.reason || r.error || 'ผิดพลาด', true); return; }
+        toast('รับออเดอร์ ' + orderId + ' แล้ว');
+        forceRefresh();
+      });
     });
   }
 
+  function doNudge(orderId) {
+    withButtonBusy('nudge-' + orderId, 'กำลังเตือน...', function () {
+      return callApi('nudgeOrderViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
+        if (!r.ok) { toast(r.error || 'เตือนไม่สำเร็จ', true); return; }
+        toast('เตือนผู้จัดการร้านแล้ว');
+      });
+    });
+  }
+
+  function loadSummary() {
+    callApi('monthToDateSummaryViaLiff', {}).then(function (s) {
+      summary = s;
+      if (currentTab === 'summary') renderSummary();
+    }).catch(function () { toast('โหลดสรุปไม่สำเร็จ', true); });
+  }
+
   function doComplete(orderId) {
-    callApi('completeOrderDeliveryViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
-      if (!r.ok) { alert(r.reason || r.error || 'ผิดพลาด'); return; }
-      refresh();
+    withButtonBusy('btn-' + orderId, 'กำลังบันทึก...', function () {
+      return callApi('completeOrderDeliveryViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
+        if (!r.ok) { toast(r.reason || r.error || 'ผิดพลาด', true); return; }
+        toast('ส่งมอบ ' + orderId + ' เรียบร้อย');
+        forceRefresh();
+      });
     });
   }
 
@@ -204,58 +354,93 @@
     var payment = document.getElementById('pay-' + orderId).value;
     var fileInput = document.getElementById('photo-' + orderId);
     var errEl = document.getElementById('err-' + orderId);
+    var submitBtn = document.getElementById('submit-' + orderId);
     errEl.textContent = '';
     if (!amount) { errEl.textContent = 'กรอกยอดเงินก่อน'; return; }
     if (!fileInput.files[0]) { errEl.textContent = 'แนบรูปบิลก่อน'; return; }
-    errEl.textContent = 'กำลังส่ง...';
+    submitBtn.disabled = true;
+    errEl.textContent = 'กำลังเตรียมรูป...';
     shrinkPhoto(fileInput.files[0], function (dataUrl) {
+      errEl.textContent = 'กำลังส่ง...';
       callApi(fn, {
-        idToken: idToken, ticketId: orderId,
+        idToken: idToken, liffSource: 'order', ticketId: orderId,
         amount: amount, payment: payment,
         photoDataUrls: dataUrl ? [dataUrl] : [],
       }).then(function (r) {
+        submitBtn.disabled = false;
         if (!r.ok) { errEl.textContent = r.error || 'ผิดพลาด'; return; }
-        openForms[orderId] = false;
-        refresh();
+        toast('บันทึก ' + orderId + ' เรียบร้อย');
+        openForms = {};
+        forceRefresh();
+      }).catch(function () {
+        submitBtn.disabled = false;
+        errEl.textContent = 'ส่งไม่สำเร็จ ลองใหม่อีกครั้ง';
       });
     });
   }
   function submitFood(orderId) { submitWithPhoto(orderId, 'submitOrderFoodForm'); }
   function submitDeliverForm(orderId) { submitWithPhoto(orderId, 'submitOrderFulfillForm'); }
 
-  document.getElementById('tabMine').addEventListener('click', function () {
-    currentTab = 'mine';
-    document.getElementById('tabMine').classList.add('active');
-    document.getElementById('tabAll').classList.remove('active');
+  function selectTab(tab) {
+    currentTab = tab;
+    ['Mine', 'All', 'Summary'].forEach(function (name) {
+      document.getElementById('tab' + name).classList.toggle('active', tab === name.toLowerCase());
+    });
+    // The summary is a separate, heavier query — fetched the first time the
+    // tab is opened rather than on every 10-second poll of the order list.
+    if (tab === 'summary' && !summary) loadSummary();
     render();
+  }
+  document.getElementById('tabMine').addEventListener('click', function () { selectTab('mine'); });
+  document.getElementById('tabAll').addEventListener('click', function () { selectTab('all'); });
+  document.getElementById('tabSummary').addEventListener('click', function () { summary = null; selectTab('summary'); });
+
+  // Pausing the poll while the tab/webview is hidden (backgrounded) saves
+  // requests and means the page doesn't come back to a burst of stale-timer
+  // catch-up traffic — check once immediately on return instead.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') forceRefresh();
   });
-  document.getElementById('tabAll').addEventListener('click', function () {
-    currentTab = 'all';
-    document.getElementById('tabAll').classList.add('active');
-    document.getElementById('tabMine').classList.remove('active');
+
+  // Paint the board as soon as its data lands, without waiting for liff.init()
+  // — the list is read-only, so it is useful on screen before we know who the
+  // viewer is. Identity only decides which rows the "ต้องทำ" tab keeps, and
+  // the whoAmI callback re-renders for that.
+  showApp();
+  refresh();
+  startPolling();
+
+  function showApp() {
+    document.getElementById('boot').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
     render();
-  });
+  }
 
   liff.init({ liffId: LIFF_ID }).then(function () {
     idToken = liff.getIDToken() || '';
     if (!idToken) {
-      document.getElementById('boot').textContent = 'เปิดหน้านี้จากปุ่มในไลน์เท่านั้น (ไม่พบ ID token)';
+      document.getElementById('whoLine').textContent = 'เปิดจากปุ่มในไลน์เพื่อกดปุ่มได้ (โหมดดูอย่างเดียว)';
       return;
     }
-    return callApi('whoAmIViaLiff', { idToken: idToken });
-  }).then(function (whoami) {
-    if (!whoami || !whoami.userId) {
-      document.getElementById('boot').textContent = 'ยืนยันตัวตนไม่สำเร็จ — เปิดจากปุ่มในไลน์ใหม่อีกครั้ง';
-      return;
-    }
-    me = whoami;
-    document.getElementById('boot').style.display = 'none';
-    document.getElementById('app').style.display = 'block';
-    document.getElementById('whoLine').textContent = me.actorName + ' (' + me.role + ')';
-    refresh();
-    setInterval(refresh, 10000);
+    // Profile photo is a nicety — never let a failed fetch cost us the page.
+    liff.getProfile().then(function (p) {
+      if (p && p.pictureUrl) {
+        var img = document.getElementById('avatar');
+        img.src = p.pictureUrl;
+        img.style.display = 'block';
+      }
+    }).catch(function () {});
+    callApi('whoAmIViaLiff', { idToken: idToken }).then(function (whoami) {
+      if (!whoami || !whoami.userId) { document.getElementById('whoLine').textContent = 'ยืนยันตัวตนไม่สำเร็จ'; return; }
+      me = whoami;
+      document.getElementById('whoLine').textContent = me.actorName + ' (' + me.role + ')';
+      render(); // re-filter "ต้องทำ" now that me.userId is known
+    });
   }).catch(function (err) {
-    document.getElementById('boot').textContent = 'เปิดไม่สำเร็จ: ' + err;
+    // The board is already on screen — a LIFF failure costs identity (and so
+    // the action buttons), not the whole page.
+    document.getElementById('whoLine').textContent = 'เชื่อมต่อไลน์ไม่สำเร็จ — ดูสถานะได้ แต่กดปุ่มไม่ได้';
+    console.error(err);
   });
 </script>
 </body>
