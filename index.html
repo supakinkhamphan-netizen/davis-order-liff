@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- LINE's in-app webview caches this page hard: an upload can be live on the
+     server while a phone still runs the previous build, which looks exactly
+     like "the fix didn't work". Ask it not to. -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <title>Davis Order</title>
 <!-- The API host is the one thing every screen waits on — get DNS/TLS out of
      the way while the HTML is still parsing. -->
@@ -149,7 +154,7 @@
     <div class="headRow">
       <img id="avatar" alt="" />
       <div>
-        <h1>🛎️ Davis Order</h1>
+        <h1>🛎️ Davis Order <span id="buildTag" style="font-size:11px;font-weight:400;opacity:.6"></span></h1>
         <div class="who" id="whoLine"></div>
       </div>
     </div>
@@ -175,6 +180,9 @@
      anyone with the URL. The data fetch now happens after liff.init(). -->
 <script>
   // ---- fill these two in before publishing ----
+  // Bump on every upload. Shown in the header, so "is the phone running the
+  // new build?" is answered by looking at the screen instead of guessing.
+  var BUILD = 'v14';
   var LIFF_ID = '2011319750-tMh303eW';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
@@ -236,6 +244,12 @@
   var STAGE_LABELS = ['รอร้านรับ', 'เตรียมอาหาร', 'กำลังจัดส่ง', 'ส่งมอบแล้ว'];
   var idToken = '';
   var accessToken = ''; // liff.getIDToken() is empty without the `openid` scope; the access token needs only `profile`
+  // 'pending' -> still asking LINE who this is | 'none' -> not in LINE, or no
+  // credential | 'ok' -> identified. render() has to know the difference:
+  // without it, switching tabs after a failed sign-in repainted skeleton cards
+  // and told the user "loading" forever about something already known to be
+  // impossible.
+  var authState = 'pending';
   function creds() { return { idToken: idToken, accessToken: accessToken }; }
   var me = null;
   var currentTab = 'mine';
@@ -410,9 +424,20 @@
   }
 
   function miniFormHtml(orderId, label, submitFnName) {
-    var open = !!openForms[orderId];
     return '<button class="actionBtn green" id="btn-' + orderId + '" onclick="toggleForm(\'' + orderId + '\')">' + label + '</button>' +
-      '<div class="miniform' + (open ? ' open' : '') + '" id="form-' + orderId + '">' +
+      formBodyHtml(orderId, submitFnName);
+  }
+
+  /**
+   * BUG FIXED: the compact "in progress" row rendered only the button, never
+   * this form — so pressing รับอาหาร marked the form open, re-rendered the same
+   * button, and nothing appeared. Worse, openForms was now non-empty, which
+   * stops the poll (refresh() bails while a form is open), so the whole board
+   * froze as well. The form markup now lives in one place and both layouts use it.
+   */
+  function formBodyHtml(orderId, submitFnName) {
+    var open = !!openForms[orderId];
+    return '<div class="miniform' + (open ? ' open' : '') + '" id="form-' + orderId + '">' +
       '<label>ยอดเงินจริง</label><input type="number" inputmode="decimal" id="amt-' + orderId + '" placeholder="เช่น 350" />' +
       '<label>Payment</label><select id="pay-' + orderId + '"><option value="Room Charge">Room Charge</option><option value="Cash">Cash</option><option value="Card">Card</option></select>' +
       // No `capture` attribute: it forces the camera on many phones, so a bill that
@@ -439,8 +464,17 @@
     return one + one + one;
   }
 
+  function noAuthHtml() {
+    return '<div class="empty"><div style="font-size:40px">🔒</div>' +
+      '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ต้องเปิดจากไลน์เท่านั้น</div>' +
+      '<div style="font-size:15px;margin-top:10px;line-height:1.7">หน้านี้แสดงเลขห้องและรายการของแขก<br>' +
+      'จึงเปิดจากเบราว์เซอร์ธรรมดาไม่ได้<br><br>' +
+      'ไปที่กลุ่มออเดอร์ในไลน์ แล้วกดปุ่ม<br><b>"📦 ดูสถานะออเดอร์"</b></div></div>';
+  }
+
   function renderSummary() {
     var list = document.getElementById('list');
+    if (authState === 'none') { list.innerHTML = noAuthHtml(); return; }
     if (!summary) { list.innerHTML = skeletonCards(); return; }
     if (summary.rows.length === 0) {
       list.innerHTML = '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วในเดือนนี้</div>';
@@ -498,11 +532,15 @@
       '<div class="title" style="font-size:16px">' + esc(r.subtitle) + '</div>' +
       '<div class="sub">' + esc(r.seller) + '</div>' +
       '<div class="items" style="margin-top:4px">' + esc(r.items.replace(/\n/g, ', ')) + '</div>' +
-      '</div>' + actionSectionHtml(r, true) + '</div></div>';
+      '</div>' + actionSectionHtml(r, true) + '</div>' +
+      // stage 1 needs a bill + amount before it can advance; stage 2 is a bare press.
+      (r.stage === 1 ? formBodyHtml(r.orderId, r.is24 ? 'submitFood' : 'submitDeliverForm') : '') +
+      '</div>';
   }
 
   function render() {
     var list = document.getElementById('list');
+    if (authState === 'none') { list.innerHTML = noAuthHtml(); return; }
     if (currentTab === 'summary') { renderSummary(); return; }
     if (allRows === null) { list.innerHTML = skeletonCards(); return; }
     var rows = allRows.filter(function (r) {
@@ -910,6 +948,7 @@
   showApp();
 
   function showApp() {
+    document.getElementById('buildTag').textContent = BUILD;
     document.getElementById('boot').style.display = 'none';
     document.getElementById('app').style.display = 'block';
     if (REQUEST_GROUP) {
@@ -930,14 +969,15 @@
     idToken = liff.getIDToken() || '';
     try { accessToken = liff.getAccessToken() || ''; } catch (e) { accessToken = ''; }
     if (!idToken && !accessToken) {
-      // No token, no board: the payload contains guest room numbers. There is
-      // no "view only" mode any more — showing buttons that can only ever fail
-      // just teaches staff the system is broken.
-      document.getElementById('list').innerHTML =
-        '<div class="empty">🔒 เปิดหน้านี้จากปุ่ม "ดูสถานะออเดอร์" ในไลน์เท่านั้น</div>';
+      // No credential, no board: the payload carries guest room numbers. There
+      // is no "view only" mode any more — buttons that can only ever fail just
+      // teach staff the system is broken.
+      authState = 'none';
       document.getElementById('whoLine').textContent = 'ยังไม่ได้ยืนยันตัวตน';
+      render();
       return;
     }
+    authState = 'ok';
     refresh();
     startPolling();
     // Clock text only; the layout is left alone (see tickClocks).
@@ -960,9 +1000,9 @@
   }).catch(function (err) {
     // The board is already on screen — a LIFF failure costs identity (and so
     // the action buttons), not the whole page.
-    document.getElementById('list').innerHTML =
-      '<div class="empty">เชื่อมต่อไลน์ไม่สำเร็จ<br>ปิดหน้านี้แล้วกดปุ่ม "ดูสถานะออเดอร์" ในกลุ่มใหม่อีกครั้ง</div>';
+    authState = 'none';
     document.getElementById('whoLine').textContent = 'เชื่อมต่อไลน์ไม่สำเร็จ';
+    render();
     console.error(err);
   });
 </script>
