@@ -127,8 +127,11 @@
   #boot { text-align:center; padding:80px 20px; color:var(--ink-2); }
   #lastUpdated { text-align:center; font-size:12px; color:var(--ink-2); padding:10px; }
   #toast { position:fixed; left:16px; right:16px; top:calc(var(--head-h) + var(--tabs-h) + 8px); background:#000; color:#fff; padding:12px 16px; border-radius:10px; font-size:14px; text-align:center; transform:translateY(120%); transition:transform .25s; z-index:20; }
-  #toast { transform:translateY(-140%); }
-  #toast.show { transform:translateY(0); }
+  /* Hidden must mean HIDDEN. translateY(-140%) is 140% of the toast's own
+     height — about 50px — which parked it right on top of the tab bar instead
+     of off-screen. Opacity + visibility cannot be off by a few pixels. */
+  #toast { opacity:0; visibility:hidden; transform:translateY(-12px); transition:opacity .2s, transform .2s, visibility .2s; }
+  #toast.show { opacity:1; visibility:visible; transform:translateY(0); }
   #toast.err { background:var(--danger); }
   #scopeBanner { max-width:520px; margin:12px auto 0; padding:10px 14px; background:#FEF3C7; color:#92400E; border-radius:10px; font-size:13px; font-weight:600; display:flex; justify-content:space-between; align-items:center; gap:10px; }
   #scopeBanner a { color:#92400E; font-weight:800; white-space:nowrap; }
@@ -232,6 +235,8 @@
 
   var STAGE_LABELS = ['รอร้านรับ', 'เตรียมอาหาร', 'กำลังจัดส่ง', 'ส่งมอบแล้ว'];
   var idToken = '';
+  var accessToken = ''; // liff.getIDToken() is empty without the `openid` scope; the access token needs only `profile`
+  function creds() { return { idToken: idToken, accessToken: accessToken }; }
   var me = null;
   var currentTab = 'mine';
   var allRows = null; // null = never loaded yet (shows skeleton, not "empty")
@@ -614,7 +619,7 @@
     if (!idToken) return; // not identified yet — the board now requires it
     refreshing = true;
     var myGeneration = boardGeneration;
-    var pending = firstBoard || callApi('listOrderStatusRows', { idToken: idToken, requestGroupId: REQUEST_GROUP });
+    var pending = firstBoard || callApi('listOrderStatusRows', { idToken: idToken, accessToken: accessToken, requestGroupId: REQUEST_GROUP });
     firstBoard = null;
     pending.then(function (rows) {
       if (myGeneration !== boardGeneration) return; // a write landed mid-flight; this data predates it
@@ -654,7 +659,14 @@
    */
   function showOffline(message) {
     failedFetches++;
-    if (failedFetches < 2 && navigator.onLine !== false) return; // one blip is not an outage
+    // A message from the server is a definite answer, not a flaky connection —
+    // show it at once. Sitting silently on skeleton cards (which is what the
+    // page did) tells the runner nothing at all.
+    if (!message && failedFetches < 2 && navigator.onLine !== false) return;
+    if (allRows === null) {
+      document.getElementById('list').innerHTML =
+        '<div class="empty">โหลดรายการไม่สำเร็จ<br><span style="font-size:14px">' + esc(message || 'เชื่อมต่อไม่ได้') + '</span></div>';
+    }
     var bar = document.getElementById('offlineBar');
     var since = serverNowMs ? Math.floor((performance.now() - serverNowLocal) / 60000) : 0;
     document.getElementById('offlineText').textContent = message ||
@@ -691,7 +703,7 @@
     boardGeneration++;
     refreshing = true; // deliberately overrides an in-flight poll: this request is the authoritative one
     var myGeneration = boardGeneration;
-    return callApi('listOrderStatusRows', { idToken: idToken, requestGroupId: REQUEST_GROUP, fresh: true }).then(function (rows) {
+    return callApi('listOrderStatusRows', { idToken: idToken, accessToken: accessToken, requestGroupId: REQUEST_GROUP, fresh: true }).then(function (rows) {
       if (myGeneration !== boardGeneration) return;
       if (!rows || rows.error) return;
       noteServerNow(rows);
@@ -760,7 +772,7 @@
 
   function doClaim(orderId) {
     withButtonBusy('btn-' + orderId, 'กำลังรับ...', function () {
-      return callApi('claimOrderViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
+      return callApi('claimOrderViaLiff', { idToken: idToken, accessToken: accessToken, orderId: orderId }).then(function (r) {
         if (!r.ok) { toast(r.reason || r.error || 'บันทึกไม่สำเร็จ ใบนี้ยังไม่มีใครรับ ลองกดอีกครั้ง', true); return; }
         toast('รับออเดอร์ ' + orderId + ' แล้ว');
         applyLocalStage(orderId, 1); // รอร้านรับ -> เตรียมอาหาร, on screen immediately
@@ -773,7 +785,7 @@
 
   function doNudge(orderId) {
     withButtonBusy('nudge-' + orderId, 'กำลังเตือน...', function () {
-      return callApi('nudgeOrderViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
+      return callApi('nudgeOrderViaLiff', { idToken: idToken, accessToken: accessToken, orderId: orderId }).then(function (r) {
         if (!r.ok) { toast(r.error || 'เตือนไม่สำเร็จ', true); return; }
         toast('เตือนผู้จัดการร้านแล้ว');
       });
@@ -781,7 +793,7 @@
   }
 
   function loadSummary() {
-    callApi('monthToDateSummaryViaLiff', {}).then(function (s) {
+    callApi('monthToDateSummaryViaLiff', creds()).then(function (s) {
       summary = s;
       if (currentTab === 'summary') renderSummary();
     }).catch(function () { toast('โหลดสรุปไม่สำเร็จ', true); });
@@ -789,7 +801,7 @@
 
   function doComplete(orderId) {
     withButtonBusy('btn-' + orderId, 'กำลังบันทึก...', function () {
-      return callApi('completeOrderDeliveryViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
+      return callApi('completeOrderDeliveryViaLiff', { idToken: idToken, accessToken: accessToken, orderId: orderId }).then(function (r) {
         if (!r.ok) { toast(r.reason || r.error || 'ผิดพลาด', true); return; }
         toast('ส่งมอบ ' + orderId + ' เรียบร้อย');
         applyLocalStage(orderId, 3);
@@ -837,7 +849,7 @@
       }, 1000);
       errEl.textContent = 'กำลังส่งบิล… 0 วิ';
       callApi(fn, {
-        idToken: idToken, liffSource: 'order', ticketId: orderId,
+        idToken: idToken, accessToken: accessToken, liffSource: 'order', ticketId: orderId,
         amount: amount, payment: payment,
         photoDataUrls: dataUrls.filter(Boolean),
       }).then(function (r) {
@@ -916,7 +928,8 @@
 
   liff.init({ liffId: LIFF_ID }).then(function () {
     idToken = liff.getIDToken() || '';
-    if (!idToken) {
+    try { accessToken = liff.getAccessToken() || ''; } catch (e) { accessToken = ''; }
+    if (!idToken && !accessToken) {
       // No token, no board: the payload contains guest room numbers. There is
       // no "view only" mode any more — showing buttons that can only ever fail
       // just teaches staff the system is broken.
@@ -938,7 +951,7 @@
         img.style.display = 'block';
       }
     }).catch(function () {});
-    callApi('whoAmIViaLiff', { idToken: idToken }).then(function (whoami) {
+    callApi('whoAmIViaLiff', { idToken: idToken, accessToken: accessToken }).then(function (whoami) {
       if (!whoami || !whoami.userId) { document.getElementById('whoLine').textContent = 'ยืนยันตัวตนไม่สำเร็จ'; return; }
       me = whoami;
       document.getElementById('whoLine').textContent = me.actorName + ' (' + me.role + ')';
