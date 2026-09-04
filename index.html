@@ -306,10 +306,37 @@
     }).finally(function () { refreshing = false; });
   }
 
-  /** A write just landed — the next poll must repaint even if the shape looks similar. */
+  /**
+   * A write just landed. Two things have to happen, in this order:
+   *
+   * 1. Move the card forward LOCALLY and repaint right now. The server already
+   *    accepted the change, so the new stage is a fact — making the runner
+   *    stare at the old status until a round trip completes is what made the
+   *    app feel broken ("บันทึกแล้วแต่สถานะไม่เปลี่ยน ต้องเข้าออกใหม่").
+   * 2. Then confirm against the server with `fresh: true`, bypassing the
+   *    8-second shared cache, so the optimistic guess is replaced by truth.
+   */
+  function applyLocalStage(orderId, stage) {
+    if (!allRows) return;
+    allRows.forEach(function (r) {
+      if (r.orderId === orderId && stage > r.stage) r.stage = stage;
+    });
+    lastPayload = ''; // the next server payload must repaint over this guess
+    render();
+  }
+
   function forceRefresh() {
     lastPayload = '';
-    refresh();
+    if (refreshing) return; // a poll is mid-flight; its result is already newer than this call
+    refreshing = true;
+    callApi('listOrderStatusRows', { requestGroupId: REQUEST_GROUP, fresh: true }).then(function (rows) {
+      allRows = rows;
+      lastPayload = JSON.stringify(rows);
+      render();
+      document.getElementById('lastUpdated').textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH');
+    }).catch(function () {
+      // The optimistic repaint above still stands — say nothing, the next poll retries.
+    }).finally(function () { refreshing = false; });
   }
 
   // Polling only runs while the page is actually on screen. The old version
@@ -341,6 +368,7 @@
       return callApi('claimOrderViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
         if (!r.ok) { toast(r.reason || r.error || 'ผิดพลาด', true); return; }
         toast('รับออเดอร์ ' + orderId + ' แล้ว');
+        applyLocalStage(orderId, 1); // รอร้านรับ -> เตรียมอาหาร, on screen immediately
         forceRefresh();
       });
     });
@@ -367,12 +395,13 @@
       return callApi('completeOrderDeliveryViaLiff', { idToken: idToken, orderId: orderId }).then(function (r) {
         if (!r.ok) { toast(r.reason || r.error || 'ผิดพลาด', true); return; }
         toast('ส่งมอบ ' + orderId + ' เรียบร้อย');
+        applyLocalStage(orderId, 3);
         forceRefresh();
       });
     });
   }
 
-  function submitWithPhoto(orderId, fn) {
+  function submitWithPhoto(orderId, fn, nextStage) {
     var amount = document.getElementById('amt-' + orderId).value;
     var payment = document.getElementById('pay-' + orderId).value;
     var fileInput = document.getElementById('photo-' + orderId);
@@ -394,6 +423,7 @@
         if (!r.ok) { errEl.textContent = r.error || 'ผิดพลาด'; return; }
         toast('บันทึก ' + orderId + ' เรียบร้อย');
         openForms = {};
+        applyLocalStage(orderId, nextStage);
         forceRefresh();
       }).catch(function () {
         submitBtn.disabled = false;
@@ -401,8 +431,10 @@
       });
     });
   }
-  function submitFood(orderId) { submitWithPhoto(orderId, 'submitOrderFoodForm'); }
-  function submitDeliverForm(orderId) { submitWithPhoto(orderId, 'submitOrderFulfillForm'); }
+  // รับอาหาร leaves the order at "กำลังจัดส่ง" (2) — one more press to go.
+  // ส่งแล้ว (non-24BLVD) is terminal, so it lands on "ส่งมอบแล้ว" (3).
+  function submitFood(orderId) { submitWithPhoto(orderId, 'submitOrderFoodForm', 2); }
+  function submitDeliverForm(orderId) { submitWithPhoto(orderId, 'submitOrderFulfillForm', 3); }
 
   function selectTab(tab) {
     currentTab = tab;
