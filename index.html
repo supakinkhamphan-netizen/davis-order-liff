@@ -140,6 +140,15 @@
   #toast.err { background:var(--danger); }
   #scopeBanner { max-width:520px; margin:12px auto 0; padding:10px 14px; background:#FEF3C7; color:#92400E; border-radius:10px; font-size:13px; font-weight:600; display:flex; justify-content:space-between; align-items:center; gap:10px; }
   #scopeBanner a { color:#92400E; font-weight:800; white-space:nowrap; }
+  /* "ทั้งหมด"/"สรุปเดือนนี้" mix every shop together — this is the one control
+     that lets a runner or a manager pull one shop back out of that mix. Hidden
+     entirely when only one shop is in play, so it never costs a single-shop
+     shift any screen space. */
+  #shopFilterBar { display:none; max-width:520px; margin:10px auto 0; }
+  .shopChipRow { display:flex; gap:8px; overflow-x:auto; padding:0 12px 2px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+  .shopChipRow::-webkit-scrollbar { display:none; }
+  .shopChip { flex:0 0 auto; border:1px solid var(--line); background:var(--card); color:var(--ink-2); font-family:inherit; font-size:14px; font-weight:600; padding:8px 14px; border-radius:999px; white-space:nowrap; }
+  .shopChip.active { background:var(--ink); color:var(--card); border-color:var(--ink); }
 </style>
 </head>
 <body>
@@ -167,6 +176,7 @@
   <div id="offlineBar"><span id="offlineText"></span><button onclick="forceRefresh()">ลองใหม่</button></div>
   <div id="scopeBanner" style="display:none"></div>
   <div id="learnBar"><span id="learnText"></span><button onclick="hideLearnBar()">ซ่อน</button></div>
+  <div id="shopFilterBar"></div>
   <div id="list"></div>
   <p id="lastUpdated"></p>
 </div>
@@ -182,7 +192,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v14';
+  var BUILD = 'v15';
   var LIFF_ID = '2011319750-tMh303eW';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
@@ -253,6 +263,9 @@
   function creds() { return { idToken: idToken, accessToken: accessToken }; }
   var me = null;
   var currentTab = 'mine';
+  // '' = every shop. Persists across tabs/polls on purpose: someone who picks
+  // "ร้าน A" on "ทั้งหมด" almost always wants that same shop on "สรุปเดือนนี้" too.
+  var shopFilter = '';
   var allRows = null; // null = never loaded yet (shows skeleton, not "empty")
   var summary = null; // month-to-date totals, loaded lazily when the tab is opened
   var openForms = {}; // orderId -> true while its inline form is open
@@ -359,6 +372,47 @@
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
+  function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
+
+  // ---- Shop filter --------------------------------------------------------
+  /** Shop names in the order they first appear, de-duplicated. */
+  function distinctShops(rows) {
+    var seen = {}, out = [];
+    (rows || []).forEach(function (r) {
+      if (r.seller && !seen[r.seller]) { seen[r.seller] = true; out.push(r.seller); }
+    });
+    out.sort(function (a, b) { return a.localeCompare(b, 'th'); });
+    return out;
+  }
+
+  /**
+   * Redrawn on every render() / renderSummary() call with whatever shops are
+   * actually present in that tab's data right now — a shop with nothing open
+   * simply doesn't get a chip. With 0 or 1 shop there is nothing to filter, so
+   * the whole bar disappears rather than sit there doing nothing.
+   */
+  function renderShopFilterBar(shops) {
+    var bar = document.getElementById('shopFilterBar');
+    if (!shops || shops.length < 2) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+    bar.innerHTML = '<div class="shopChipRow">' +
+      '<button class="shopChip' + (shopFilter === '' ? ' active' : '') + '" data-shop="">ทุกร้าน</button>' +
+      shops.map(function (s) {
+        return '<button class="shopChip' + (shopFilter === s ? ' active' : '') + '" data-shop="' + escAttr(s) + '">' + esc(s) + '</button>';
+      }).join('') +
+      '</div>';
+    bar.style.display = 'block';
+  }
+  function hideShopFilterBar() {
+    var bar = document.getElementById('shopFilterBar');
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+  }
+  document.getElementById('shopFilterBar').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-shop]');
+    if (!btn) return;
+    shopFilter = btn.getAttribute('data-shop') || '';
+    if (currentTab === 'summary') renderSummary(); else render();
+  });
 
   function toast(msg, isErr) {
     var el = document.getElementById('toast');
@@ -474,18 +528,25 @@
 
   function renderSummary() {
     var list = document.getElementById('list');
-    if (authState === 'none') { list.innerHTML = noAuthHtml(); return; }
-    if (!summary) { list.innerHTML = skeletonCards(); return; }
-    if (summary.rows.length === 0) {
-      list.innerHTML = '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วในเดือนนี้</div>';
+    if (authState === 'none') { hideShopFilterBar(); list.innerHTML = noAuthHtml(); return; }
+    if (!summary) { hideShopFilterBar(); list.innerHTML = skeletonCards(); return; }
+    renderShopFilterBar(distinctShops(summary.rows));
+    var rows = shopFilter ? summary.rows.filter(function (r) { return r.seller === shopFilter; }) : summary.rows;
+    if (rows.length === 0) {
+      list.innerHTML = shopFilter
+        ? '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วของ "' + esc(shopFilter) + '" ในเดือนนี้</div>'
+        : '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วในเดือนนี้</div>';
       return;
     }
-    list.innerHTML = '<div class="card"><div class="id">สรุปเดือน ' + esc(summary.monthKey) + '</div>' +
-      summary.rows.map(function (r) {
+    // The server's grandTotal is authoritative for the unfiltered view; once a
+    // shop is picked the total has to be recomputed from just its rows.
+    var total = shopFilter ? rows.reduce(function (sum, r) { return sum + Number(r.amount || 0); }, 0) : summary.grandTotal;
+    list.innerHTML = '<div class="card"><div class="id">สรุปเดือน ' + esc(summary.monthKey) + (shopFilter ? ' · ' + esc(shopFilter) : '') + '</div>' +
+      rows.map(function (r) {
         return '<div class="sumRow"><span>' + esc(r.seller) + ' → ' + esc(r.buyer) + ' <span style="color:var(--ink-2)">(' + r.count + ' ออเดอร์)</span></span>' +
           '<b>' + Number(r.amount).toLocaleString('en-US') + '</b></div>';
       }).join('') +
-      '<div class="sumTotal"><span>รวมทั้งหมด</span><span>' + Number(summary.grandTotal).toLocaleString('en-US') + ' บาท</span></div>' +
+      '<div class="sumTotal"><span>' + (shopFilter ? 'รวมเฉพาะร้านนี้' : 'รวมทั้งหมด') + '</span><span>' + Number(total).toLocaleString('en-US') + ' บาท</span></div>' +
       '</div>';
   }
 
@@ -540,10 +601,10 @@
 
   function render() {
     var list = document.getElementById('list');
-    if (authState === 'none') { list.innerHTML = noAuthHtml(); return; }
+    if (authState === 'none') { hideShopFilterBar(); list.innerHTML = noAuthHtml(); return; }
     if (currentTab === 'summary') { renderSummary(); return; }
-    if (allRows === null) { list.innerHTML = skeletonCards(); return; }
-    var rows = allRows.filter(function (r) {
+    if (allRows === null) { hideShopFilterBar(); list.innerHTML = skeletonCards(); return; }
+    var tabRows = allRows.filter(function (r) {
       if (currentTab === 'all') return true;
       // While whoAmI is still in flight `me` is null. The old test dropped
       // every claimed row in that window, so for the first few seconds of every
@@ -553,11 +614,20 @@
       if (!r.assignedUserId) return true;
       return !me || r.assignedUserId === me.userId;
     });
+
+    // Chip list reflects THIS tab's shops (pre-filter), so switching back to
+    // "ทุกร้าน" is always one tap away even after picking one.
+    renderShopFilterBar(distinctShops(tabRows));
+    var rows = shopFilter ? tabRows.filter(function (r) { return r.seller === shopFilter; }) : tabRows;
+
     if (rows.length === 0) {
-      list.innerHTML = '<div class="empty"><div style="font-size:40px">🌙</div>' +
-        '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ไม่มีออเดอร์ค้างตอนนี้</div>' +
-        // The real ambiguity is "no work" versus "the app is broken" — say which.
-        '<div style="font-size:15px;margin-top:10px;line-height:1.6">หน้าจอจะขึ้นเองเมื่อมีออเดอร์ใหม่<br>ไม่ต้องคอยกดรีเฟรช</div></div>';
+      list.innerHTML = shopFilter
+        ? '<div class="empty"><div style="font-size:40px">🌙</div>' +
+          '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ไม่มีออเดอร์ค้างของ "' + esc(shopFilter) + '" ตอนนี้</div></div>'
+        : '<div class="empty"><div style="font-size:40px">🌙</div>' +
+          '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ไม่มีออเดอร์ค้างตอนนี้</div>' +
+          // The real ambiguity is "no work" versus "the app is broken" — say which.
+          '<div style="font-size:15px;margin-top:10px;line-height:1.6">หน้าจอจะขึ้นเองเมื่อมีออเดอร์ใหม่<br>ไม่ต้องคอยกดรีเฟรช</div></div>';
       return;
     }
 
