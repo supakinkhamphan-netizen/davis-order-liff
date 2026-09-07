@@ -197,7 +197,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v18';
+  var BUILD = 'v19';
   var LIFF_ID = '2011319750-tMh303eW';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
@@ -589,6 +589,27 @@
     });
   }
 
+  /** Zone-only companion to downloadPayrollCsv — just the 24BLVD/Fairway payment lines, for whatever month is picked in the ผู้บริหาร tab's month field (not always the previous month like the full export). */
+  function downloadZonePaymentCsv() {
+    withButtonBusy('btnExportZone', 'กำลังสร้างไฟล์...', function () {
+      var payload = creds();
+      payload.monthKey = managerMonthKey;
+      return callApi('exportZonePaymentCsvViaLiff', payload).then(function (r) {
+        if (!r.ok && r.error) { toast(r.error, true); return; }
+        var blob = new Blob(['﻿' + r.csv], { type: 'text/csv;charset=utf-8;' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = r.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+        toast('ดาวน์โหลดไฟล์จ่ายเงินตามโซนเดือน ' + r.monthKey + ' แล้ว');
+      });
+    });
+  }
+
   /**
    * ผู้บริหาร tab: two independent cards (SLA leaderboard, monthly
    * reconciliation) that each load and fail on their own — a slow/broken
@@ -655,6 +676,7 @@
             ' <span style="color:var(--ink-2)">(' + r.count + ' ออเดอร์)</span></span><b>' + Number(r.amount).toLocaleString('en-US') + '</b></div>';
         }).join('');
       }
+      html += '<button class="actionBtn" style="margin-top:14px;width:100%" id="btnExportZone" onclick="downloadZonePaymentCsv()">📥 ดาวน์โหลดไฟล์จ่ายเงินตามโซน</button>';
       html += '</div>';
     }
 
