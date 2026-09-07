@@ -197,7 +197,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v17';
+  var BUILD = 'v18';
   var LIFF_ID = '2011319750-tMh303eW';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
@@ -640,6 +640,23 @@
         '<div class="sumTotal"><span>รวมทั้งหมด</span><span>' + Number(managerRecon.grandTotal).toLocaleString('en-US') + ' บาท</span></div>';
     }
     html += '</div>';
+
+    // Zone rollup: AMORE/LULU/BESOBESO/NOT IN BANGKOK collapse into one
+    // 24BLVD line, MANDRAKE CAFE into Fairway — the number actually paid,
+    // not per-shop. null (not just empty) for a venue_manager, since their
+    // scoped view is one shop, not a zone.
+    if (managerRecon && managerRecon.zoneRows) {
+      html += '<div class="card"><div class="id">💰 ยอดจ่ายจริงตามโซน</div>';
+      if (!managerRecon.zoneRows.length) {
+        html += '<div class="empty" style="padding:16px 0">ไม่มียอดข้ามโซนเดือนนี้</div>';
+      } else {
+        html += managerRecon.zoneRows.map(function (r) {
+          return '<div class="sumRow"><span>' + esc(r.sellerZone) + ' → ' + esc(r.buyerZone) +
+            ' <span style="color:var(--ink-2)">(' + r.count + ' ออเดอร์)</span></span><b>' + Number(r.amount).toLocaleString('en-US') + '</b></div>';
+        }).join('');
+      }
+      html += '</div>';
+    }
 
     list.innerHTML = html;
   }
