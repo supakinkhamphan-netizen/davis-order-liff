@@ -140,17 +140,6 @@
   #toast.err { background:var(--danger); }
   #scopeBanner { max-width:520px; margin:12px auto 0; padding:10px 14px; background:#FEF3C7; color:#92400E; border-radius:10px; font-size:13px; font-weight:600; display:flex; justify-content:space-between; align-items:center; gap:10px; }
   #scopeBanner a { color:#92400E; font-weight:800; white-space:nowrap; }
-  /* "ทั้งหมด"/"สรุปเดือนนี้" mix every shop together — this is the one control
-     that lets a runner or a manager pull one shop back out of that mix. Hidden
-     entirely when only one shop is in play, so it never costs a single-shop
-     shift any screen space. */
-  #shopFilterBar { display:none; max-width:520px; margin:10px auto 0; }
-  .shopChipRow { display:flex; gap:8px; overflow-x:auto; padding:0 12px 2px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
-  .shopChipRow::-webkit-scrollbar { display:none; }
-  .shopChip { flex:0 0 auto; border:1px solid var(--line); background:var(--card); color:var(--ink-2); font-family:inherit; font-size:14px; font-weight:600; padding:8px 14px; border-radius:999px; white-space:nowrap; }
-  .shopChip.active { background:var(--ink); color:var(--card); border-color:var(--ink); }
-  .mgrPeriodRow { display:flex; gap:8px; margin-top:10px; }
-  .mgrMonthInput { margin-top:10px; width:100%; min-height:44px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
 </style>
 </head>
 <body>
@@ -174,14 +163,10 @@
     <button id="tabMine" class="active">ต้องทำ</button>
     <button id="tabAll">ทั้งหมด</button>
     <button id="tabSummary">สรุปเดือนนี้</button>
-    <!-- Hidden until whoAmI resolves a manager/venue_manager role — 'staff'
-         never sees this tab exist, same boundary the backend enforces. -->
-    <button id="tabManager" style="display:none">ผู้บริหาร</button>
   </div>
   <div id="offlineBar"><span id="offlineText"></span><button onclick="forceRefresh()">ลองใหม่</button></div>
   <div id="scopeBanner" style="display:none"></div>
   <div id="learnBar"><span id="learnText"></span><button onclick="hideLearnBar()">ซ่อน</button></div>
-  <div id="shopFilterBar"></div>
   <div id="list"></div>
   <p id="lastUpdated"></p>
 </div>
@@ -197,7 +182,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v16';
+  var BUILD = 'v15';
   var LIFF_ID = '2011319750-tMh303eW';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
@@ -268,17 +253,8 @@
   function creds() { return { idToken: idToken, accessToken: accessToken }; }
   var me = null;
   var currentTab = 'mine';
-  // '' = every shop. Persists across tabs/polls on purpose: someone who picks
-  // "ร้าน A" on "ทั้งหมด" almost always wants that same shop on "สรุปเดือนนี้" too.
-  var shopFilter = '';
   var allRows = null; // null = never loaded yet (shows skeleton, not "empty")
   var summary = null; // month-to-date totals, loaded lazily when the tab is opened
-  // ผู้บริหาร tab state — separate from `summary` above (that one's always the
-  // current month; this one's an arbitrary period/month a manager picked).
-  var managerDays = 30;
-  var managerMonthKey = '';
-  var managerLeaderboard = null;
-  var managerRecon = null;
   var openForms = {}; // orderId -> true while its inline form is open
   var refreshing = false; // guards against overlapping poll ticks piling up
   var toastTimer = null;
@@ -324,8 +300,6 @@
     return m + ':' + (ss < 10 ? '0' + ss : ss);
   }
   function humanMins(sec) { return Math.floor(sec / 60) + ' นาที'; }
-  function pad2(n) { return n < 10 ? '0' + n : String(n); }
-  function thisMonthKey_() { var d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1); }
 
   /**
    * What the cashier clock should say right now. Always frames it as time
@@ -385,47 +359,6 @@
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
-  function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
-
-  // ---- Shop filter --------------------------------------------------------
-  /** Shop names in the order they first appear, de-duplicated. */
-  function distinctShops(rows) {
-    var seen = {}, out = [];
-    (rows || []).forEach(function (r) {
-      if (r.seller && !seen[r.seller]) { seen[r.seller] = true; out.push(r.seller); }
-    });
-    out.sort(function (a, b) { return a.localeCompare(b, 'th'); });
-    return out;
-  }
-
-  /**
-   * Redrawn on every render() / renderSummary() call with whatever shops are
-   * actually present in that tab's data right now — a shop with nothing open
-   * simply doesn't get a chip. With 0 or 1 shop there is nothing to filter, so
-   * the whole bar disappears rather than sit there doing nothing.
-   */
-  function renderShopFilterBar(shops) {
-    var bar = document.getElementById('shopFilterBar');
-    if (!shops || shops.length < 2) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
-    bar.innerHTML = '<div class="shopChipRow">' +
-      '<button class="shopChip' + (shopFilter === '' ? ' active' : '') + '" data-shop="">ทุกร้าน</button>' +
-      shops.map(function (s) {
-        return '<button class="shopChip' + (shopFilter === s ? ' active' : '') + '" data-shop="' + escAttr(s) + '">' + esc(s) + '</button>';
-      }).join('') +
-      '</div>';
-    bar.style.display = 'block';
-  }
-  function hideShopFilterBar() {
-    var bar = document.getElementById('shopFilterBar');
-    bar.style.display = 'none';
-    bar.innerHTML = '';
-  }
-  document.getElementById('shopFilterBar').addEventListener('click', function (e) {
-    var btn = e.target.closest('button[data-shop]');
-    if (!btn) return;
-    shopFilter = btn.getAttribute('data-shop') || '';
-    if (currentTab === 'summary') renderSummary(); else render();
-  });
 
   function toast(msg, isErr) {
     var el = document.getElementById('toast');
@@ -541,117 +474,45 @@
 
   function renderSummary() {
     var list = document.getElementById('list');
-    if (authState === 'none') { hideShopFilterBar(); list.innerHTML = noAuthHtml(); return; }
-    if (!summary) { hideShopFilterBar(); list.innerHTML = skeletonCards(); return; }
-    renderShopFilterBar(distinctShops(summary.rows));
-    var rows = shopFilter ? summary.rows.filter(function (r) { return r.seller === shopFilter; }) : summary.rows;
-    if (rows.length === 0) {
-      list.innerHTML = shopFilter
-        ? '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วของ "' + esc(shopFilter) + '" ในเดือนนี้</div>'
-        : '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วในเดือนนี้</div>';
+    if (authState === 'none') { list.innerHTML = noAuthHtml(); return; }
+    if (!summary) { list.innerHTML = skeletonCards(); return; }
+    if (summary.rows.length === 0) {
+      list.innerHTML = '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วในเดือนนี้</div>';
       return;
     }
-    // The server's grandTotal is authoritative for the unfiltered view; once a
-    // shop is picked the total has to be recomputed from just its rows.
-    var total = shopFilter ? rows.reduce(function (sum, r) { return sum + Number(r.amount || 0); }, 0) : summary.grandTotal;
-    list.innerHTML = '<div class="card"><div class="id">สรุปเดือน ' + esc(summary.monthKey) + (shopFilter ? ' · ' + esc(shopFilter) : '') + '</div>' +
-      rows.map(function (r) {
+    list.innerHTML = '<div class="card"><div class="id">สรุปเดือน ' + esc(summary.monthKey) + '</div>' +
+      summary.rows.map(function (r) {
         return '<div class="sumRow"><span>' + esc(r.seller) + ' → ' + esc(r.buyer) + ' <span style="color:var(--ink-2)">(' + r.count + ' ออเดอร์)</span></span>' +
           '<b>' + Number(r.amount).toLocaleString('en-US') + '</b></div>';
       }).join('') +
-      '<div class="sumTotal"><span>' + (shopFilter ? 'รวมเฉพาะร้านนี้' : 'รวมทั้งหมด') + '</span><span>' + Number(total).toLocaleString('en-US') + ' บาท</span></div>' +
+      '<div class="sumTotal"><span>รวมทั้งหมด</span><span>' + Number(summary.grandTotal).toLocaleString('en-US') + ' บาท</span></div>' +
+      // Payroll export names guests, rooms, and individual payments — same bar
+      // as the SLA digest, so it's gated by role here too, not just server-side.
+      (me && me.role === 'manager'
+        ? '<button class="actionBtn" style="margin-top:14px;width:100%" id="btnExportPayroll" onclick="downloadPayrollCsv()">📥 ดาวน์โหลดไฟล์บัญชี (เดือนที่แล้ว)</button>'
+        : '') +
       '</div>';
   }
 
-  /**
-   * ผู้บริหาร tab: two independent cards (SLA leaderboard, monthly
-   * reconciliation) that each load and fail on their own — a slow/broken
-   * reconciliation query must not blank out a working leaderboard, and vice
-   * versa. Neither ever runs for a plain 'staff' caller: the tab that opens
-   * this view is itself hidden until whoAmIViaLiff says otherwise, and the
-   * backend re-checks role independently (requireManagerActor_).
-   */
-  function renderManager() {
-    hideShopFilterBar();
-    var list = document.getElementById('list');
-    if (authState === 'none') { list.innerHTML = noAuthHtml(); return; }
-
-    var html = '<div class="card"><div class="id">🏆 อันดับค่าปรับ SLA</div>' +
-      '<div class="mgrPeriodRow">' +
-      [7, 30, 90].map(function (d) {
-        return '<button class="shopChip' + (managerDays === d ? ' active' : '') + '" onclick="setManagerDays(' + d + ')">' + d + ' วัน</button>';
-      }).join('') +
-      '</div>';
-    if (!managerLeaderboard) {
-      html += '<div style="font-size:13px;color:var(--ink-2);margin-top:10px">กำลังโหลด...</div>';
-    } else if (managerLeaderboard.error) {
-      html += '<div class="empty" style="padding:16px 0">' + esc(managerLeaderboard.error) + '</div>';
-    } else if (!managerLeaderboard.rows.length) {
-      html += '<div class="empty" style="padding:16px 0">ไม่มีรายการโดนปรับใน ' + managerDays + ' วันที่ผ่านมา 🎉</div>';
-    } else {
-      if (managerLeaderboard.isScoped) html += '<div style="font-size:12px;color:var(--ink-2);margin-top:10px">แสดงเฉพาะร้านของคุณ</div>';
-      html += managerLeaderboard.rows.map(function (r, i) {
-        return '<div class="sumRow"><span>' + (i + 1) + '. ' + esc(r.name || '(ไม่ทราบชื่อ)') +
-          ' <span style="color:var(--ink-2)">(' + r.count + ' ครั้ง)</span></span><b>' + Number(r.amount).toLocaleString('en-US') + '</b></div>';
-      }).join('');
-    }
-    html += '</div>';
-
-    html += '<div class="card"><div class="id">📅 สรุปรายเดือน</div>' +
-      '<input type="month" class="mgrMonthInput" value="' + esc(managerMonthKey) + '" onchange="setManagerMonth(this.value)" />';
-    if (!managerRecon) {
-      html += '<div style="font-size:13px;color:var(--ink-2);margin-top:10px">กำลังโหลด...</div>';
-    } else if (managerRecon.error) {
-      html += '<div class="empty" style="padding:16px 0">' + esc(managerRecon.error) + '</div>';
-    } else if (!managerRecon.rows.length) {
-      html += '<div class="empty" style="padding:16px 0">ไม่มีออเดอร์ที่ส่งมอบแล้วในเดือนนี้</div>';
-    } else {
-      if (managerRecon.isScoped) html += '<div style="font-size:12px;color:var(--ink-2);margin-top:10px">แสดงเฉพาะร้านของคุณ</div>';
-      html += managerRecon.rows.map(function (r) {
-        return '<div class="sumRow"><span>' + esc(r.seller) + ' → ' + esc(r.buyer) +
-          ' <span style="color:var(--ink-2)">(' + r.count + ' ออเดอร์)</span></span><b>' + Number(r.amount).toLocaleString('en-US') + '</b></div>';
-      }).join('') +
-        '<div class="sumTotal"><span>รวมทั้งหมด</span><span>' + Number(managerRecon.grandTotal).toLocaleString('en-US') + ' บาท</span></div>';
-    }
-    html += '</div>';
-
-    list.innerHTML = html;
-  }
-
-  function loadManagerLeaderboard() {
-    var payload = creds();
-    payload.days = managerDays;
-    callApi('slaLeaderboardViaLiff', payload).then(function (r) {
-      managerLeaderboard = (r && r.error) ? r : (r || { error: 'โหลดไม่สำเร็จ' });
-    }).catch(function () {
-      managerLeaderboard = { error: 'โหลดไม่สำเร็จ ลองใหม่อีกครั้ง' };
-    }).then(function () {
-      if (currentTab === 'manager') renderManager();
+  /** Accounting's monthly pay-cycle file: order detail + cross-store totals for the month that just closed. Manager role only (enforced server-side too). */
+  function downloadPayrollCsv() {
+    withButtonBusy('btnExportPayroll', 'กำลังสร้างไฟล์...', function () {
+      return callApi('exportMonthlyPayrollCsvViaLiff', creds()).then(function (r) {
+        if (!r.ok && r.error) { toast(r.error, true); return; }
+        // ﻿: without this BOM, Excel opens the Thai headers/values as
+        // mojibake — it guesses ANSI unless a UTF-8 file says otherwise.
+        var blob = new Blob(['﻿' + r.csv], { type: 'text/csv;charset=utf-8;' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = r.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+        toast('ดาวน์โหลดไฟล์บัญชีเดือน ' + r.monthKey + ' แล้ว');
+      });
     });
-  }
-  function loadManagerRecon() {
-    var payload = creds();
-    payload.monthKey = managerMonthKey;
-    callApi('monthlyReconciliationViaLiff', payload).then(function (r) {
-      managerRecon = (r && r.error) ? r : (r || { error: 'โหลดไม่สำเร็จ' });
-    }).catch(function () {
-      managerRecon = { error: 'โหลดไม่สำเร็จ ลองใหม่อีกครั้ง' };
-    }).then(function () {
-      if (currentTab === 'manager') renderManager();
-    });
-  }
-  function setManagerDays(d) {
-    managerDays = d;
-    managerLeaderboard = null;
-    render();
-    loadManagerLeaderboard();
-  }
-  function setManagerMonth(monthKey) {
-    if (!monthKey) return;
-    managerMonthKey = monthKey;
-    managerRecon = null;
-    render();
-    loadManagerRecon();
   }
 
   var GROUP_META = [
@@ -705,11 +566,10 @@
 
   function render() {
     var list = document.getElementById('list');
-    if (authState === 'none') { hideShopFilterBar(); list.innerHTML = noAuthHtml(); return; }
+    if (authState === 'none') { list.innerHTML = noAuthHtml(); return; }
     if (currentTab === 'summary') { renderSummary(); return; }
-    if (currentTab === 'manager') { renderManager(); return; }
-    if (allRows === null) { hideShopFilterBar(); list.innerHTML = skeletonCards(); return; }
-    var tabRows = allRows.filter(function (r) {
+    if (allRows === null) { list.innerHTML = skeletonCards(); return; }
+    var rows = allRows.filter(function (r) {
       if (currentTab === 'all') return true;
       // While whoAmI is still in flight `me` is null. The old test dropped
       // every claimed row in that window, so for the first few seconds of every
@@ -719,20 +579,11 @@
       if (!r.assignedUserId) return true;
       return !me || r.assignedUserId === me.userId;
     });
-
-    // Chip list reflects THIS tab's shops (pre-filter), so switching back to
-    // "ทุกร้าน" is always one tap away even after picking one.
-    renderShopFilterBar(distinctShops(tabRows));
-    var rows = shopFilter ? tabRows.filter(function (r) { return r.seller === shopFilter; }) : tabRows;
-
     if (rows.length === 0) {
-      list.innerHTML = shopFilter
-        ? '<div class="empty"><div style="font-size:40px">🌙</div>' +
-          '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ไม่มีออเดอร์ค้างของ "' + esc(shopFilter) + '" ตอนนี้</div></div>'
-        : '<div class="empty"><div style="font-size:40px">🌙</div>' +
-          '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ไม่มีออเดอร์ค้างตอนนี้</div>' +
-          // The real ambiguity is "no work" versus "the app is broken" — say which.
-          '<div style="font-size:15px;margin-top:10px;line-height:1.6">หน้าจอจะขึ้นเองเมื่อมีออเดอร์ใหม่<br>ไม่ต้องคอยกดรีเฟรช</div></div>';
+      list.innerHTML = '<div class="empty"><div style="font-size:40px">🌙</div>' +
+        '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ไม่มีออเดอร์ค้างตอนนี้</div>' +
+        // The real ambiguity is "no work" versus "the app is broken" — say which.
+        '<div style="font-size:15px;margin-top:10px;line-height:1.6">หน้าจอจะขึ้นเองเมื่อมีออเดอร์ใหม่<br>ไม่ต้องคอยกดรีเฟรช</div></div>';
       return;
     }
 
@@ -1098,7 +949,7 @@
 
   function selectTab(tab) {
     currentTab = tab;
-    ['Mine', 'All', 'Summary', 'Manager'].forEach(function (name) {
+    ['Mine', 'All', 'Summary'].forEach(function (name) {
       document.getElementById('tab' + name).classList.toggle('active', tab === name.toLowerCase());
     });
     // The summary is a separate, heavier query — fetched the first time the
@@ -1109,14 +960,6 @@
   document.getElementById('tabMine').addEventListener('click', function () { selectTab('mine'); });
   document.getElementById('tabAll').addEventListener('click', function () { selectTab('all'); });
   document.getElementById('tabSummary').addEventListener('click', function () { summary = null; selectTab('summary'); });
-  document.getElementById('tabManager').addEventListener('click', function () {
-    if (!managerMonthKey) managerMonthKey = thisMonthKey_();
-    managerLeaderboard = null;
-    managerRecon = null;
-    selectTab('manager');
-    loadManagerLeaderboard();
-    loadManagerRecon();
-  });
 
   // Pausing the poll while the tab/webview is hidden (backgrounded) saves
   // requests and means the page doesn't come back to a burst of stale-timer
@@ -1178,11 +1021,6 @@
       if (!whoami || !whoami.userId) { document.getElementById('whoLine').textContent = 'ยืนยันตัวตนไม่สำเร็จ'; return; }
       me = whoami;
       document.getElementById('whoLine').textContent = me.actorName + ' (' + me.role + ')';
-      // The backend re-checks this on every manager call regardless — this
-      // only decides whether the tab is worth showing at all.
-      if (me.role === 'manager' || me.role === 'venue_manager') {
-        document.getElementById('tabManager').style.display = '';
-      }
       render(); // re-filter "ต้องทำ" now that me.userId is known
     });
   }).catch(function (err) {
