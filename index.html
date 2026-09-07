@@ -197,7 +197,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v20';
+  var BUILD = 'v21';
   var LIFF_ID = '2011319750-tMh303eW';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
@@ -577,10 +577,12 @@
    * link; opening that in the SYSTEM browser (external:true, not LINE's own
    * webview) is what actually lets iOS/Android download or hand it to Sheets.
    */
+  /** Opens the PDF — a finished document accounting can read/print immediately — the CSV lands in the same Drive folder either way, for whoever needs to import the numbers instead. */
   function openExportedCsv(r) {
     if (!r.ok && r.error) { toast(r.error, true); return; }
-    if (!r.driveUrl) { toast('ได้ไฟล์แต่ไม่มีลิงก์เปิด — แจ้งผู้ดูแลระบบ', true); return; }
-    liff.openWindow({ url: r.driveUrl, external: true });
+    var url = r.drivePdfUrl || r.driveUrl;
+    if (!url) { toast('ได้ไฟล์แต่ไม่มีลิงก์เปิด — แจ้งผู้ดูแลระบบ', true); return; }
+    liff.openWindow({ url: url, external: true });
   }
 
   function downloadPayrollCsv() {
