@@ -197,7 +197,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v19';
+  var BUILD = 'v20';
   var LIFF_ID = '2011319750-tMh303eW';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
@@ -569,23 +569,23 @@
   }
 
   /** Accounting's monthly pay-cycle file: order detail + cross-store totals for the month that just closed. Manager role only (enforced server-side too). */
+  /**
+   * A client-side Blob + <a download> never reliably reaches an actual file
+   * on the phone from inside LINE's in-app browser (iOS especially — the
+   * webview has nowhere real to save it, so "the download" just vanishes).
+   * The backend now saves the CSV to Drive instead and hands back a share
+   * link; opening that in the SYSTEM browser (external:true, not LINE's own
+   * webview) is what actually lets iOS/Android download or hand it to Sheets.
+   */
+  function openExportedCsv(r) {
+    if (!r.ok && r.error) { toast(r.error, true); return; }
+    if (!r.driveUrl) { toast('ได้ไฟล์แต่ไม่มีลิงก์เปิด — แจ้งผู้ดูแลระบบ', true); return; }
+    liff.openWindow({ url: r.driveUrl, external: true });
+  }
+
   function downloadPayrollCsv() {
     withButtonBusy('btnExportPayroll', 'กำลังสร้างไฟล์...', function () {
-      return callApi('exportMonthlyPayrollCsvViaLiff', creds()).then(function (r) {
-        if (!r.ok && r.error) { toast(r.error, true); return; }
-        // ﻿: without this BOM, Excel opens the Thai headers/values as
-        // mojibake — it guesses ANSI unless a UTF-8 file says otherwise.
-        var blob = new Blob(['﻿' + r.csv], { type: 'text/csv;charset=utf-8;' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = r.filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
-        toast('ดาวน์โหลดไฟล์บัญชีเดือน ' + r.monthKey + ' แล้ว');
-      });
+      return callApi('exportMonthlyPayrollCsvViaLiff', creds()).then(openExportedCsv);
     });
   }
 
@@ -594,19 +594,7 @@
     withButtonBusy('btnExportZone', 'กำลังสร้างไฟล์...', function () {
       var payload = creds();
       payload.monthKey = managerMonthKey;
-      return callApi('exportZonePaymentCsvViaLiff', payload).then(function (r) {
-        if (!r.ok && r.error) { toast(r.error, true); return; }
-        var blob = new Blob(['﻿' + r.csv], { type: 'text/csv;charset=utf-8;' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = r.filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
-        toast('ดาวน์โหลดไฟล์จ่ายเงินตามโซนเดือน ' + r.monthKey + ' แล้ว');
-      });
+      return callApi('exportZonePaymentCsvViaLiff', payload).then(openExportedCsv);
     });
   }
 
