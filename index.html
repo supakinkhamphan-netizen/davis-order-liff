@@ -149,6 +149,24 @@
   .shopChipRow::-webkit-scrollbar { display:none; }
   .shopChip { flex:0 0 auto; border:1px solid var(--line); background:var(--card); color:var(--ink-2); font-family:inherit; font-size:14px; font-weight:600; padding:8px 14px; border-radius:999px; white-space:nowrap; }
   .shopChip.active { background:var(--ink); color:var(--card); border-color:var(--ink); }
+  /* Sales filter + stat strip (สรุปเดือนนี้ tab, managers only). The stat
+     grid is 2x2 rather than a 4-across row: four numbers side by side on a
+     360px phone shrink to a size nobody reads at arm's length in a dark shop. */
+  .rangeChipRow { display:flex; gap:8px; overflow-x:auto; padding:0 0 2px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+  .rangeChipRow::-webkit-scrollbar { display:none; }
+  .rangeChip { flex:0 0 auto; border:1px solid var(--line); background:var(--card); color:var(--ink-2); font-family:inherit; font-size:14px; font-weight:600; padding:8px 14px; border-radius:999px; white-space:nowrap; }
+  .rangeChip.active { background:var(--ink); color:var(--card); border-color:var(--ink); }
+  .customRangeRow { display:none; gap:8px; margin-top:10px; }
+  .customRangeRow.open { display:flex; }
+  .customRangeRow input { flex:1; min-width:0; min-height:44px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
+  .statGrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
+  .statBox { background:var(--bg); border-radius:10px; padding:12px 14px; }
+  .statBox .k { font-size:12px; color:var(--ink-2); font-weight:600; }
+  .statBox .v { font-size:20px; font-weight:800; margin-top:4px; line-height:1.2; }
+  .statBox .v small { font-size:13px; font-weight:600; color:var(--ink-2); }
+  .statBox.wide { grid-column:1 / -1; }
+  .zoneRow { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .zoneRow:last-child { border-bottom:none; }
   .mgrPeriodRow { display:flex; gap:8px; margin-top:10px; }
   .mgrMonthInput { margin-top:10px; width:100%; min-height:44px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
 </style>
@@ -197,7 +215,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v21';
+  var BUILD = 'v22';
   var LIFF_ID = '2011319750-tMh303eW';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
@@ -232,18 +250,27 @@
    * instead, so read both forms. Done here (not after liff.init) because the
    * board request below is fired before the SDK has even loaded.
    */
-  function readGroupParam() {
+  /**
+   * Same two-form read as readGroupParam, for any parameter. The brief card's
+   * "ดูรายละเอียด" button deep-links here as ?tab=summary&range=today, and
+   * LIFF may hand that whole query over inside liff.state after a redirect —
+   * reading only location.search would drop the preset every time it did.
+   */
+  function readParam(name) {
     var q = new URLSearchParams(location.search);
-    var direct = q.get('group');
+    var direct = q.get(name);
     if (direct) return direct;
     var state = q.get('liff.state');
     if (state) {
-      var m = /[?&]group=([^&]+)/.exec(decodeURIComponent(state));
+      var m = new RegExp('[?&]' + name + '=([^&]+)').exec(decodeURIComponent(state));
       if (m) return decodeURIComponent(m[1]);
     }
     return '';
   }
+  function readGroupParam() { return readParam('group'); }
   var REQUEST_GROUP = readGroupParam();
+  var INITIAL_TAB = readParam('tab');
+  var INITIAL_RANGE = readParam('range');
 
   // The pre-SDK head start is deliberately gone. The board carries guest room
   // numbers, so it may no longer be fetched before liff.init() supplies an ID
@@ -256,7 +283,16 @@
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
 
+  // Flow B (ร้านขายร้าน) reads the same four stages with different words —
+  // "รอร้านรับ" leaves the shop that placed the order unsure whose move it is.
+  // The server also sends r.stageLabel; this array is the fallback for a row
+  // fetched before that field existed.
   var STAGE_LABELS = ['รอร้านรับ', 'เตรียมอาหาร', 'กำลังจัดส่ง', 'ส่งมอบแล้ว'];
+  var STAGE_LABELS_SELL = ['รอร้านที่ถูกสั่งยืนยัน', 'กำลังเตรียมของ', 'กำลังส่ง', 'ส่งมอบแล้ว'];
+  function stageLabelOf(r) {
+    if (r && r.stageLabel) return String(r.stageLabel).replace(/^[^\u0E00-\u0E7Fa-zA-Z]+/, '');
+    return (r && r.isSell ? STAGE_LABELS_SELL : STAGE_LABELS)[(r && r.stage) || 0];
+  }
   var idToken = '';
   var accessToken = ''; // liff.getIDToken() is empty without the `openid` scope; the access token needs only `profile`
   // 'pending' -> still asking LINE who this is | 'none' -> not in LINE, or no
@@ -273,6 +309,13 @@
   var shopFilter = '';
   var allRows = null; // null = never loaded yet (shows skeleton, not "empty")
   var summary = null; // month-to-date totals, loaded lazily when the tab is opened
+  // Sales figures for the picked range (managers only). `sales` is null until
+  // the first successful load; salesRange is what the chips currently say.
+  var sales = null;
+  var salesRange = 'today';
+  var salesFrom = '';
+  var salesTo = '';
+  var salesLoading = false;
   // ผู้บริหาร tab state — separate from `summary` above (that one's always the
   // current month; this one's an arbitrary period/month a manager picked).
   var managerDays = 30;
@@ -437,11 +480,12 @@
 
   // A single slim bar + "N/4 · label" line reads faster on a phone than four
   // dot-and-caption columns, and leaves more room for the action button below.
-  function progressHtml(stage) {
+  function progressHtml(r) {
+    var stage = r.stage;
     var pct = Math.round((stage / 3) * 100);
     return '<div class="progress">' +
       '<div class="track"><div class="fill" style="width:' + pct + '%"></div></div>' +
-      '<div class="label"><span>ขั้น ' + (stage + 1) + '/4</span><b>' + STAGE_LABELS[stage] + '</b></div>' +
+      '<div class="label"><span>ขั้น ' + (stage + 1) + '/4</span><b>' + esc(stageLabelOf(r)) + '</b></div>' +
       '</div>';
   }
 
@@ -506,7 +550,7 @@
     var open = !!openForms[orderId];
     return '<div class="miniform' + (open ? ' open' : '') + '" id="form-' + orderId + '">' +
       '<label>ยอดเงินจริง</label><input type="number" inputmode="decimal" id="amt-' + orderId + '" placeholder="เช่น 350" />' +
-      '<label>Payment</label><select id="pay-' + orderId + '"><option value="Room Charge">Room Charge</option><option value="Cash">Cash</option><option value="Card">Card</option></select>' +
+      '<label>Payment</label><select id="pay-' + orderId + '"><option value="Room Charge">Room Charge</option><option value="Cash">Cash</option><option value="Card">Card</option><option value="QR Code">QR Code</option></select>' +
       // No `capture` attribute: it forces the camera on many phones, so a bill that
       // was already photographed (or already handed back) could not be attached at
       // all. `multiple` matches what the Apps Script form has always accepted — a
@@ -539,22 +583,72 @@
       'ไปที่กลุ่มออเดอร์ในไลน์ แล้วกดปุ่ม<br><b>"📦 ดูสถานะออเดอร์"</b></div></div>';
   }
 
+  var RANGE_CHIPS = [
+    { key: 'today', label: 'วันนี้' },
+    { key: '7d', label: '7 วัน' },
+    { key: 'month', label: 'เดือนนี้' },
+    { key: 'custom', label: 'เลือกช่วงเอง' },
+  ];
+
+  function isSalesViewer() { return !!me && (me.role === 'manager' || me.role === 'venue_manager'); }
+  function baht(n) { return Number(n || 0).toLocaleString('en-US'); }
+
+  /**
+   * The live numbers strip. Refreshed by the existing 10-second poll rather
+   * than by a timer of its own — "real-time" here means the same tick the
+   * board already runs on, not a second stream of requests.
+   */
+  function salesPanelHtml() {
+    var chips = '<div class="rangeChipRow">' + RANGE_CHIPS.map(function (c) {
+      return '<button class="rangeChip' + (salesRange === c.key ? ' active' : '') + '" data-range="' + c.key + '">' + c.label + '</button>';
+    }).join('') + '</div>' +
+      '<div class="customRangeRow' + (salesRange === 'custom' ? ' open' : '') + '">' +
+      '<input type="date" id="salesFrom" value="' + escAttr(salesFrom) + '" />' +
+      '<input type="date" id="salesTo" value="' + escAttr(salesTo) + '" />' +
+      '</div>';
+
+    var stats;
+    if (!sales) {
+      stats = '<div class="statGrid"><div class="statBox wide"><div class="k">ยอดขาย</div><div class="v">' +
+        (salesLoading ? 'กำลังโหลด...' : '—') + '</div></div></div>';
+    } else {
+      stats = '<div class="statGrid">' +
+        '<div class="statBox wide"><div class="k">ยอดขายรวม</div><div class="v">' + baht(sales.totalSales) + ' <small>บาท</small></div></div>' +
+        '<div class="statBox"><div class="k">จำนวนออเดอร์</div><div class="v">' + sales.orderCount + '</div></div>' +
+        '<div class="statBox"><div class="k">เฉลี่ยต่อบิล</div><div class="v">' + baht(sales.avgPerOrder) + ' <small>บาท</small></div></div>' +
+        '<div class="statBox"><div class="k">ค้างอยู่ตอนนี้</div><div class="v">' + sales.pendingCount + '</div></div>' +
+        '<div class="statBox"><div class="k">ตรงเวลา <small>(≤' + sales.targetMinutes + ' น.)</small></div><div class="v">' +
+          (sales.onTimePct == null ? '—' : sales.onTimePct + '%') + '</div></div>' +
+        '</div>' +
+        (sales.byZone && sales.byZone.length
+          ? '<div style="margin-top:16px"><div class="k" style="font-size:12px;color:var(--ink-2);font-weight:600">แยกตามโซน</div>' +
+            sales.byZone.map(function (z) {
+              return '<div class="zoneRow"><span>' + esc(z.zone) + ' <span style="color:var(--ink-2)">(' + z.count + ')</span></span><b>' + baht(z.amount) + '</b></div>';
+            }).join('') + '</div>'
+          : '');
+    }
+
+    return '<div class="card" id="salesPanel"><div class="id">📊 ยอดขาย' +
+      (sales && sales.isScoped ? ' · เฉพาะร้านของคุณ' : '') + '</div>' + chips + stats + '</div>';
+  }
+
   function renderSummary() {
     var list = document.getElementById('list');
     if (authState === 'none') { hideShopFilterBar(); list.innerHTML = noAuthHtml(); return; }
-    if (!summary) { hideShopFilterBar(); list.innerHTML = skeletonCards(); return; }
+    var salesHtml = isSalesViewer() ? salesPanelHtml() : '';
+    if (!summary) { hideShopFilterBar(); list.innerHTML = salesHtml + skeletonCards(); return; }
     renderShopFilterBar(distinctShops(summary.rows));
     var rows = shopFilter ? summary.rows.filter(function (r) { return r.seller === shopFilter; }) : summary.rows;
     if (rows.length === 0) {
-      list.innerHTML = shopFilter
+      list.innerHTML = salesHtml + (shopFilter
         ? '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วของ "' + esc(shopFilter) + '" ในเดือนนี้</div>'
-        : '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วในเดือนนี้</div>';
+        : '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วในเดือนนี้</div>');
       return;
     }
     // The server's grandTotal is authoritative for the unfiltered view; once a
     // shop is picked the total has to be recomputed from just its rows.
     var total = shopFilter ? rows.reduce(function (sum, r) { return sum + Number(r.amount || 0); }, 0) : summary.grandTotal;
-    list.innerHTML = '<div class="card"><div class="id">สรุปเดือน ' + esc(summary.monthKey) + (shopFilter ? ' · ' + esc(shopFilter) : '') + '</div>' +
+    list.innerHTML = salesHtml + '<div class="card"><div class="id">สรุปเดือน ' + esc(summary.monthKey) + (shopFilter ? ' · ' + esc(shopFilter) : '') + '</div>' +
       rows.map(function (r) {
         return '<div class="sumRow"><span>' + esc(r.seller) + ' → ' + esc(r.buyer) + ' <span style="color:var(--ink-2)">(' + r.count + ' ออเดอร์)</span></span>' +
           '<b>' + Number(r.amount).toLocaleString('en-US') + '</b></div>';
@@ -719,7 +813,7 @@
   var group4Open = false;
   function cardHtml(r) {
     var title = r.isSell ? (esc(r.buyer) + ' สั่งจาก ' + esc(r.seller)) : esc(r.subtitle);
-    var sub = r.isSell ? 'สั่งซื้อข้ามร้าน' : esc(r.seller);
+    var sub = r.isSell ? ('สั่งข้ามร้าน — ' + esc(r.seller) + ' เป็นคนเตรียม') : esc(r.seller);
     if (r.orderedByName) sub += ' · สั่งโดย ' + esc(r.orderedByName);
     var c = clockFor(r);
     var menuOpen = !!openMenus[r.orderId];
@@ -899,6 +993,10 @@
       clearOffline();
       var payload = JSON.stringify(rows);
       if (payload !== lastPayload) { lastPayload = payload; render(); }
+      // Same tick, no extra timer: the boss asked for the sales figures to be
+      // live, and the board is already polling. Only fetched while the tab
+      // that shows them is actually open.
+      if (currentTab === 'summary' && isSalesViewer()) loadSales(false);
       document.getElementById('lastUpdated').textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH');
     }).catch(function () {
       showOffline();
@@ -1067,6 +1165,62 @@
     }).catch(function () { toast('โหลดสรุปไม่สำเร็จ', true); });
   }
 
+  /**
+   * Sales figures for the picked range. Repaints only when the numbers
+   * actually changed: renderSummary() rebuilds the whole list, so an
+   * unconditional repaint on every 10-second tick would blur the date input
+   * a manager is halfway through filling in.
+   */
+  var lastSalesPayload = '';
+  function loadSales(force) {
+    if (!isSalesViewer()) return;
+    if (salesLoading) return;
+    salesLoading = true;
+    var payload = creds();
+    payload.range = salesRange;
+    if (salesRange === 'custom') { payload.from = salesFrom; payload.to = salesTo; }
+    callApi('orderSalesSummaryViaLiff', payload).then(function (s) {
+      if (!s || s.error) { if (force) toast(s && s.error ? s.error : 'โหลดยอดขายไม่สำเร็จ', true); return; }
+      sales = s;
+      var json = JSON.stringify(s);
+      if (force || json !== lastSalesPayload) {
+        lastSalesPayload = json;
+        if (currentTab === 'summary') renderSummary();
+      }
+    }).catch(function () {
+      if (force) toast('โหลดยอดขายไม่สำเร็จ', true);
+    }).finally(function () { salesLoading = false; });
+  }
+
+  function setSalesRange(key) {
+    salesRange = key;
+    if (key === 'custom' && !salesFrom) {
+      // Seed the pickers with today so the two fields are never both empty —
+      // an empty date range submits as "today" server-side anyway, and showing
+      // that up front is less confusing than two blank boxes.
+      var t = new Date();
+      var pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+      salesTo = t.getFullYear() + '-' + pad(t.getMonth() + 1) + '-' + pad(t.getDate());
+      salesFrom = salesTo;
+    }
+    sales = null;
+    lastSalesPayload = '';
+    renderSummary();
+    if (key !== 'custom' || (salesFrom && salesTo)) loadSales(true);
+  }
+
+  document.getElementById('list').addEventListener('click', function (e) {
+    var chip = e.target.closest('.rangeChip');
+    if (!chip) return;
+    setSalesRange(chip.getAttribute('data-range'));
+  });
+  document.getElementById('list').addEventListener('change', function (e) {
+    if (e.target.id !== 'salesFrom' && e.target.id !== 'salesTo') return;
+    salesFrom = document.getElementById('salesFrom').value;
+    salesTo = document.getElementById('salesTo').value;
+    if (salesFrom && salesTo) loadSales(true);
+  });
+
   function doComplete(orderId) {
     withButtonBusy('btn-' + orderId, 'กำลังบันทึก...', function () {
       return callApi('completeOrderDeliveryViaLiff', { idToken: idToken, accessToken: accessToken, orderId: orderId }).then(function (r) {
@@ -1159,6 +1313,7 @@
     // The summary is a separate, heavier query — fetched the first time the
     // tab is opened rather than on every 10-second poll of the order list.
     if (tab === 'summary' && !summary) loadSummary();
+    if (tab === 'summary' && !sales) loadSales(true);
     render();
   }
   document.getElementById('tabMine').addEventListener('click', function () { selectTab('mine'); });
@@ -1237,6 +1392,15 @@
       // only decides whether the tab is worth showing at all.
       if (me.role === 'manager' || me.role === 'venue_manager') {
         document.getElementById('tabManager').style.display = '';
+      }
+      // The brief card's "ดูรายละเอียด" deep link. Applied here rather than at
+      // boot because the sales panel is manager-only — the role is not known
+      // until whoAmI comes back, and jumping a 'staff' user to a tab whose
+      // main content they cannot load would just show them an error.
+      if (INITIAL_TAB === 'summary' && isSalesViewer()) {
+        if (INITIAL_RANGE) salesRange = INITIAL_RANGE;
+        selectTab('summary');
+        return;
       }
       render(); // re-filter "ต้องทำ" now that me.userId is known
     });
