@@ -167,6 +167,29 @@
   .statBox.wide { grid-column:1 / -1; }
   .zoneRow { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line); font-size:14px; }
   .zoneRow:last-child { border-bottom:none; }
+  /* Per-shop takings. A bar against the best-selling shop is read in a glance;
+     a column of baht figures has to be compared number by number. */
+  .shopRow { display:block; width:100%; text-align:left; background:none; border:none; font-family:inherit; color:inherit;
+             padding:9px 0 7px; border-bottom:1px solid var(--line); }
+  .shopRow:last-child { border-bottom:none; }
+  .shopRow.picked { background:var(--bg); border-radius:8px; padding-left:8px; padding-right:8px; }
+  .shopRowTop { display:flex; justify-content:space-between; gap:10px; font-size:14px; align-items:baseline; }
+  .shopRowTop b { white-space:nowrap; }
+  .shopBarTrack { height:6px; border-radius:999px; background:var(--line); margin-top:6px; overflow:hidden; }
+  .shopBarFill { height:100%; border-radius:999px; background:var(--ink); }
+  /* Bottom sheet for the cancel reason — thumb-reachable, big targets, and
+     it dims the board behind it so there is one decision on screen. */
+  .sheetWrap { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:flex-end; justify-content:center; z-index:50; }
+  .sheet { width:100%; max-width:520px; background:var(--card); border-radius:18px 18px 0 0; padding:20px 16px calc(20px + env(safe-area-inset-bottom)); }
+  .sheetTitle { font-size:18px; font-weight:800; }
+  .sheetHint { font-size:13px; color:var(--ink-2); margin:4px 0 12px; }
+  .sheetBtn { display:block; width:100%; min-height:52px; margin-top:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:12px; font-family:inherit; font-size:16px; font-weight:700; }
+  .sheetBtn.cancel { color:var(--ink-2); font-weight:600; border-style:dashed; }
+  .sheetBtn[disabled] { opacity:.5; }
+  .promise { margin-top:8px; padding:7px 10px; border-radius:8px; font-size:13px; font-weight:700; }
+  .promise.ok { background:#dcfce7; color:#166534; }
+  .promise.soon { background:#fef3c7; color:#92400e; }
+  .promise.late { background:#fee2e2; color:#991b1b; }
   .mgrPeriodRow { display:flex; gap:8px; margin-top:10px; }
   .mgrMonthInput { margin-top:10px; width:100%; min-height:44px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
 </style>
@@ -215,7 +238,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v22';
+  var BUILD = 'v23';
   var LIFF_ID = '2011319750-tMh303eW';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
@@ -347,8 +370,8 @@
   // showing none of it: the same button costs 0฿ on one card and 200฿ on the
   // next, and nothing on screen said which. That is not a polish problem, it
   // is a fairness problem.
-  var CASHIER_100 = 300, CASHIER_200 = 600, CASHIER_RESCUE = 900; // seconds
-  var KITCHEN_LIMIT = 780; // 13 นาที — just under the 15-minute kitchen band
+  var CASHIER_100 = 300, CASHIER_200 = 480, CASHIER_RESCUE = 900; // seconds — 5 / 8 / 15 นาที
+  var KITCHEN_LIMIT = 1020; // 17 นาที — just under the 18-minute kitchen budget
 
   /** Seconds since a "yyyy-MM-dd HH:mm:ss" stamp, measured against the SERVER
    *  clock we were handed, not the phone's — an old handset is routinely
@@ -360,6 +383,12 @@
     if (isNaN(t)) return 0;
     var nowMs = serverNowMs + (performance.now() - serverNowLocal);
     return Math.max(0, Math.floor((nowMs - t) / 1000));
+  }
+
+  /** The trusted clock: the server's time at the last fetch, advanced locally. Keeps running offline. */
+  function serverNowEstimate() {
+    if (!serverNowMs) return Date.now();
+    return serverNowMs + (performance.now() - serverNowLocal);
   }
 
   function mmss(sec) {
@@ -414,6 +443,31 @@
 
   function clockFor(r) {
     return r.stage === 0 ? cashierClock(r) : kitchenClock(r);
+  }
+
+  /**
+   * The promise clock: 30 minutes for a hotel order, 45 for shop-to-shop,
+   * measured order → delivered. Deliberately separate from the clocks above,
+   * which count down to a fine on one leg — this one is the guest's wait, and
+   * it is the number the whole shift is judged on.
+   *
+   * Driven by `dueAt` from the server so the phone's own clock, which is
+   * routinely minutes out, cannot move the deadline.
+   */
+  function promiseClock(r) {
+    if (!r || !r.dueAt || r.stage >= 3 || r.isCancelled) return null;
+    var leftSec = Math.round((parseServerStamp(r.dueAt) - serverNowEstimate()) / 1000);
+    var leftMin = Math.round(leftSec / 60);
+    if (leftSec < 0) return { tier: 'late', text: '🔴 เกินเป้า ' + humanMins(-leftSec) + ' (เป้า ' + r.targetMinutes + ' นาที)' };
+    if (leftSec <= 600) return { tier: 'soon', text: '🟡 เหลือ ' + (leftSec < 60 ? leftSec + ' วิ' : leftMin + ' นาที') + ' ถึงเป้า ' + r.targetMinutes + ' นาที' };
+    return { tier: 'ok', text: '🟢 เหลือ ' + leftMin + ' นาที (เป้า ' + r.targetMinutes + ' นาที)' };
+  }
+
+  /** "2026-09-10 01:20:00" -> epoch ms, parsed field by field (see orderParseTime_ on the backend). */
+  function parseServerStamp(str) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(String(str || ''));
+    if (!m) return NaN;
+    return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime();
   }
 
   /** Which section a row belongs in. Ordering is by what it costs to leave the
@@ -583,15 +637,48 @@
       'ไปที่กลุ่มออเดอร์ในไลน์ แล้วกดปุ่ม<br><b>"📦 ดูสถานะออเดอร์"</b></div></div>';
   }
 
+  // "7 วัน" and "สัปดาห์นี้" are deliberately separate chips: one is a rolling
+  // window, the other starts on Monday. They used to be the same thing, which
+  // is why last week could never be compared with this one. (F1/F4)
   var RANGE_CHIPS = [
     { key: 'today', label: 'วันนี้' },
     { key: '7d', label: '7 วัน' },
+    { key: 'week', label: 'สัปดาห์นี้' },
+    { key: 'lastweek', label: 'สัปดาห์ที่แล้ว' },
     { key: 'month', label: 'เดือนนี้' },
     { key: 'custom', label: 'เลือกช่วงเอง' },
   ];
 
   function isSalesViewer() { return !!me && (me.role === 'manager' || me.role === 'venue_manager'); }
   function baht(n) { return Number(n || 0).toLocaleString('en-US'); }
+
+  /**
+   * E2 — every shop, not just the five the LINE card has room for, with a bar
+   * against the top seller. Tapping a shop drives the SAME shopFilter the chip
+   * bar uses; a second filtering mechanism here would be one more thing that
+   * can disagree with the list underneath it.
+   */
+  function shopBreakdownHtml() {
+    if (!sales || !sales.byShop || !sales.byShop.length) return '';
+    var peak = sales.byShop[0].amount || 0;
+    var total = sales.totalSales || 0;
+    return '<div style="margin-top:16px"><div class="k" style="font-size:12px;color:var(--ink-2);font-weight:600">' +
+      'แยกตามร้าน <span style="font-weight:500">· กดที่ร้านเพื่อดูเฉพาะร้านนั้น</span></div>' +
+      sales.byShop.map(function (sh) {
+        var pct = total > 0 ? Math.round((sh.amount / total) * 100) : 0;
+        var width = peak > 0 ? Math.max(2, Math.round((sh.amount / peak) * 100)) : 0;
+        return '<button class="shopRow' + (shopFilter === sh.shop ? ' picked' : '') + '" data-shop-row="' + escAttr(sh.shop) + '">' +
+          '<span class="shopRowTop"><span>' + esc(sh.shop) +
+            ' <span style="color:var(--ink-2)">(' + sh.count + ' · ' + pct + '%)</span></span>' +
+            '<b>' + baht(sh.amount) + '</b></span>' +
+          '<span class="shopBarTrack"><span class="shopBarFill" style="width:' + width + '%"></span></span>' +
+          '</button>';
+      }).join('') +
+      (shopFilter
+        ? '<button class="shopRow" data-shop-row="" style="color:var(--ink-2);font-size:13px;font-weight:600">✕ ล้างตัวกรอง (ดูทุกร้าน)</button>'
+        : '') +
+      '</div>';
+  }
 
   /**
    * The live numbers strip. Refreshed by the existing 10-second poll rather
@@ -607,6 +694,7 @@
       '<input type="date" id="salesTo" value="' + escAttr(salesTo) + '" />' +
       '</div>';
 
+    var ot = (sales && sales.onTime) || { hotel: {}, sell: {} };
     var stats;
     if (!sales) {
       stats = '<div class="statGrid"><div class="statBox wide"><div class="k">ยอดขาย</div><div class="v">' +
@@ -616,20 +704,37 @@
         '<div class="statBox wide"><div class="k">ยอดขายรวม</div><div class="v">' + baht(sales.totalSales) + ' <small>บาท</small></div></div>' +
         '<div class="statBox"><div class="k">จำนวนออเดอร์</div><div class="v">' + sales.orderCount + '</div></div>' +
         '<div class="statBox"><div class="k">เฉลี่ยต่อบิล</div><div class="v">' + baht(sales.avgPerOrder) + ' <small>บาท</small></div></div>' +
-        '<div class="statBox"><div class="k">ค้างอยู่ตอนนี้</div><div class="v">' + sales.pendingCount + '</div></div>' +
-        '<div class="statBox"><div class="k">ตรงเวลา <small>(≤' + sales.targetMinutes + ' น.)</small></div><div class="v">' +
-          (sales.onTimePct == null ? '—' : sales.onTimePct + '%') + '</div></div>' +
+        '<div class="statBox"><div class="k">ค้างอยู่ในรอบนี้</div><div class="v">' + sales.pendingCount + '</div></div>' +
+        '<div class="statBox"><div class="k">ยกเลิก</div><div class="v">' + (sales.cancelledCount || 0) + '</div></div>' +
+        // Two promises (30 นาที / 45 นาที) so two scores — a blended number
+        // across different targets cannot be acted on.
+        '<div class="statBox"><div class="k">ตรงเวลา โรงแรม <small>(≤' + ot.hotel.target + ')</small></div><div class="v">' +
+          (ot.hotel.pct == null ? '—' : ot.hotel.pct + '%') + '</div></div>' +
+        '<div class="statBox"><div class="k">ตรงเวลา ร้าน→ร้าน <small>(≤' + ot.sell.target + ')</small></div><div class="v">' +
+          (ot.sell.pct == null ? '—' : ot.sell.pct + '%') + '</div></div>' +
         '</div>' +
+        (sales.staleCount
+          ? '<div style="margin-top:12px;padding:10px 12px;background:#fef2f2;color:#991b1b;border-radius:8px;font-size:13px;font-weight:700">' +
+            '🧹 ค้างข้ามรอบ ' + sales.staleCount + ' ออเดอร์ — ต้องไปเคลียร์</div>'
+          : '') +
         (sales.byZone && sales.byZone.length
           ? '<div style="margin-top:16px"><div class="k" style="font-size:12px;color:var(--ink-2);font-weight:600">แยกตามโซน</div>' +
             sales.byZone.map(function (z) {
               return '<div class="zoneRow"><span>' + esc(z.zone) + ' <span style="color:var(--ink-2)">(' + z.count + ')</span></span><b>' + baht(z.amount) + '</b></div>';
             }).join('') + '</div>'
-          : '');
+          : '') +
+        shopBreakdownHtml();
     }
 
+    // Say which trading round these numbers cover. Shops run 10:00–02:00, so
+    // "today" is not the calendar day and showing the range removes the
+    // guesswork about whether last night's small hours are in or out.
+    var roundNote = sales && sales.range
+      ? '<div style="font-size:12px;color:var(--ink-2);margin-top:2px">รอบขาย ' + esc(sales.range.from) +
+        (sales.range.from === sales.range.to ? '' : ' – ' + esc(sales.range.to)) + ' (10:00 – 02:00)</div>'
+      : '';
     return '<div class="card" id="salesPanel"><div class="id">📊 ยอดขาย' +
-      (sales && sales.isScoped ? ' · เฉพาะร้านของคุณ' : '') + '</div>' + chips + stats + '</div>';
+      (sales && sales.isScoped ? ' · เฉพาะร้านของคุณ' : '') + '</div>' + roundNote + chips + stats + '</div>';
   }
 
   function renderSummary() {
@@ -816,11 +921,17 @@
     var sub = r.isSell ? ('สั่งข้ามร้าน — ' + esc(r.seller) + ' เป็นคนเตรียม') : esc(r.seller);
     if (r.orderedByName) sub += ' · สั่งโดย ' + esc(r.orderedByName);
     var c = clockFor(r);
+    var promise = promiseClock(r);
     var menuOpen = !!openMenus[r.orderId];
     return '<div class="card" style="position:relative" id="card-' + r.orderId + '">' +
       '<div class="clock ' + c.tier + '" id="clk-' + r.orderId + '">' + esc(c.text) + '</div>' +
       '<div class="title">' + title + '</div>' +
       '<div class="sub">' + sub + '</div>' +
+      // The guest's wait, under the fine clock: the fine clock says whether
+      // the person pressing is exposed, this says whether the promise is
+      // still intact. They are not the same question and the runner needs both.
+      (promise ? '<div class="promise ' + promise.tier + '" id="pro-' + r.orderId + '">' + esc(promise.text) + '</div>' : '') +
+      (r.isCancelled ? '<div class="promise late">🚫 ยกเลิกแล้ว</div>' : '') +
       '<div class="items">' + esc(r.items) + '</div>' +
       actionSectionHtml(r) +
       '<button class="moreBtn" onclick="toggleMenu(\'' + r.orderId + '\')" aria-label="ตัวเลือกเพิ่มเติม">⋯</button>' +
@@ -834,6 +945,12 @@
           ? '<a href="' + esc(r.billUrls[0]) + '" target="_blank" rel="noopener">🧾 ดูบิลที่ส่งไป (' + r.billUrls.length + ' รูป)</a>'
           : '<div style="padding:12px 4px;color:var(--ink-2);font-size:15px">🧾 ยังไม่มีรูปบิล</div>') +
         '<button onclick="showRules()">📋 กติกาค่าปรับ</button>' +
+        // Destructive, so it sits at the bottom of a menu that already takes
+        // two deliberate taps to open, and asks for a reason before it does
+        // anything (the backend refuses a cancellation without one).
+        (r.stage < 3 && !r.isCancelled
+          ? '<button style="color:#b91c1c;font-weight:700" onclick="askCancel(\'' + r.orderId + '\')">🚫 ยกเลิกออเดอร์</button>'
+          : '') +
       '</div>' +
       '</div>';
   }
@@ -937,6 +1054,57 @@
     if (bar.dataset.mode !== 'reorder') { try { localStorage.setItem('learnHidden', '1'); } catch (e) {} }
   }
 
+  var CANCEL_REASONS = ['แขกยกเลิก', 'สั่งผิด', 'ของหมด', 'อื่นๆ'];
+
+  /**
+   * Two steps on purpose. A one-tap cancel on a board that repaints every ten
+   * seconds is a mis-tap waiting to happen, and the reason is not optional —
+   * an order that vanished with no reason recorded is unanswerable a week later.
+   *
+   * Rendered in the page rather than with prompt(): a native dialog inside
+   * LINE's in-app webview is unreliable (silently suppressed on some iOS
+   * builds), and a cancel button that appears to do nothing is worse than no
+   * cancel button at all. It also gives the reasons real thumb-sized targets.
+   */
+  function askCancel(orderId) {
+    closeCancelSheet();
+    var sheet = document.createElement('div');
+    sheet.id = 'cancelSheet';
+    sheet.className = 'sheetWrap';
+    sheet.innerHTML =
+      '<div class="sheet">' +
+      '<div class="sheetTitle">ยกเลิกออเดอร์ ' + esc(orderId) + '</div>' +
+      '<div class="sheetHint">เลือกเหตุผล — บันทึกลงประวัติออเดอร์</div>' +
+      CANCEL_REASONS.map(function (reason) {
+        return '<button class="sheetBtn" data-reason="' + escAttr(reason) + '">' + esc(reason) + '</button>';
+      }).join('') +
+      '<button class="sheetBtn cancel" data-close="1">ไม่ยกเลิก กลับไปก่อน</button>' +
+      '</div>';
+    sheet.addEventListener('click', function (e) {
+      if (e.target === sheet || e.target.getAttribute('data-close')) { closeCancelSheet(); return; }
+      var btn = e.target.closest('button[data-reason]');
+      if (!btn) return;
+      var reason = btn.getAttribute('data-reason');
+      sheet.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+      btn.textContent = 'กำลังยกเลิก...';
+      var payload = creds();
+      payload.orderId = orderId;
+      payload.reason = reason;
+      callApi('cancelOrderViaLiff', payload).then(function (r) {
+        closeCancelSheet();
+        if (!r || !r.ok) { toast((r && (r.reason || r.error)) || 'ยกเลิกไม่สำเร็จ', true); return; }
+        toast('ยกเลิก ' + orderId + ' แล้ว (' + reason + ')');
+        openMenus = {};
+        forceRefresh();
+      }).catch(function () { closeCancelSheet(); toast('ยกเลิกไม่สำเร็จ', true); });
+    });
+    document.body.appendChild(sheet);
+  }
+  function closeCancelSheet() {
+    var el = document.getElementById('cancelSheet');
+    if (el) el.remove();
+  }
+
   function toggleMenu(orderId) {
     var wasOpen = !!openMenus[orderId];
     openMenus = {};
@@ -961,6 +1129,14 @@
       var c = clockFor(r);
       if (el.textContent !== c.text) el.textContent = c.text;
       if (el.className !== 'clock ' + c.tier) el.className = 'clock ' + c.tier;
+      // Text only, same as the fine clock above: touching layout every second
+      // is what makes a board feel like it is fighting the thumb.
+      var pel = document.getElementById('pro-' + r.orderId);
+      var pc = promiseClock(r);
+      if (pel && pc) {
+        if (pel.textContent !== pc.text) pel.textContent = pc.text;
+        if (pel.className !== 'promise ' + pc.tier) pel.className = 'promise ' + pc.tier;
+      }
       if (layoutGroups[r.orderId] !== undefined && layoutGroups[r.orderId] !== groupOf(r)) moved = true;
     });
     if (moved && !pendingReorder) { pendingReorder = true; updateReorderBar(); }
@@ -1091,7 +1267,13 @@
     stopPolling();
     pollTimer = setInterval(function () {
       if (document.visibilityState !== 'visible') return;
-      if (currentTab === 'summary') return;
+      // The sales panel used to die here. `refresh()` is the only caller of
+      // loadSales, and this early return meant that the moment the สรุป tab
+      // was opened the numbers froze at whatever they were on arrival — the
+      // exact opposite of the "ดูยอด real time" this was built for. The
+      // summary tab now polls the figures directly instead of the board it
+      // is not showing.
+      if (currentTab === 'summary') { loadSales(false); return; }
       refresh();
     }, 10000);
   }
@@ -1210,6 +1392,12 @@
   }
 
   document.getElementById('list').addEventListener('click', function (e) {
+    var shopRow = e.target.closest('[data-shop-row]');
+    if (shopRow) {
+      shopFilter = shopRow.getAttribute('data-shop-row') || '';
+      if (currentTab === 'summary') renderSummary(); else render();
+      return;
+    }
     var chip = e.target.closest('.rangeChip');
     if (!chip) return;
     setSalesRange(chip.getAttribute('data-range'));
@@ -1318,7 +1506,16 @@
   }
   document.getElementById('tabMine').addEventListener('click', function () { selectTab('mine'); });
   document.getElementById('tabAll').addEventListener('click', function () { selectTab('all'); });
-  document.getElementById('tabSummary').addEventListener('click', function () { summary = null; selectTab('summary'); });
+  document.getElementById('tabSummary').addEventListener('click', function () {
+    // Both caches cleared, not just `summary`: leaving `sales` populated meant
+    // "!sales" in selectTab was false and switching away and back never
+    // refetched, so the figures could be arbitrarily old with nothing on
+    // screen saying so.
+    summary = null;
+    sales = null;
+    lastSalesPayload = '';
+    selectTab('summary');
+  });
   document.getElementById('tabManager').addEventListener('click', function () {
     if (!managerMonthKey) managerMonthKey = thisMonthKey_();
     managerLeaderboard = null;
