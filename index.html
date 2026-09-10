@@ -586,27 +586,28 @@
     }
     if (mini) {
       // Claimed work is a compact row: the runner already knows what it is.
-      var label = (row.stage === 1 && row.is24) ? 'รับอาหาร'
+      var label = (row.stage === 1 && row.is24) ? 'อาหารเสร็จ'
         : (row.stage === 1) ? 'ส่งแล้ว'
         : 'ส่งมอบ';
-      var fn = (row.stage === 2 && row.is24) ? 'doComplete' : 'toggleForm';
-      return '<button class="miniBtn" id="btn-' + row.orderId + '" onclick="' + fn + '(\'' + row.orderId + '\')">' + label + '</button>';
+      // Every step opens a form now: the bare 24BLVD close was what let an
+      // order finish with no bill and no amount, and the backend refuses it.
+      return '<button class="miniBtn" id="btn-' + row.orderId + '" onclick="toggleForm(\'' + row.orderId + '\')">' + label + '</button>';
     }
     if (row.stage === 1 && row.is24) {
-      return miniFormHtml(row.orderId, '🍳 รับอาหาร (ถ่ายรูปบิล)', 'submitFood');
+      return miniFormHtml(row.orderId, '🍳 อาหารเสร็จแล้ว (ครัวกด)', 'submitFood', 'kitchen');
     }
     if (row.stage === 1 && !row.is24) {
-      return miniFormHtml(row.orderId, '✅ ส่งแล้ว (แนบบิล)', 'submitDeliverForm');
+      return miniFormHtml(row.orderId, '✅ ส่งแล้ว (แนบบิล)', 'submitDeliverForm', 'handover');
     }
     if (row.stage === 2 && row.is24) {
-      return '<button class="actionBtn green" id="btn-' + row.orderId + '" onclick="doComplete(\'' + row.orderId + '\')">✅ ส่งมอบให้ลูกค้า</button>';
+      return miniFormHtml(row.orderId, '✅ ส่งมอบแล้ว (ถ่ายรูป+บิล)', 'submitDeliverForm', 'handover');
     }
     return '';
   }
 
-  function miniFormHtml(orderId, label, submitFnName) {
+  function miniFormHtml(orderId, label, submitFnName, kind) {
     return '<button class="actionBtn green" id="btn-' + orderId + '" onclick="toggleForm(\'' + orderId + '\')">' + label + '</button>' +
-      formBodyHtml(orderId, submitFnName);
+      formBodyHtml(orderId, submitFnName, kind);
   }
 
   /**
@@ -616,16 +617,30 @@
    * stops the poll (refresh() bails while a form is open), so the whole board
    * froze as well. The form markup now lives in one place and both layouts use it.
    */
-  function formBodyHtml(orderId, submitFnName) {
+  /**
+   * `kind` is 'kitchen' or 'handover' — the two steps stopped being the same
+   * form in Phase 5. The kitchen has no bill and does not know what the guest
+   * paid, so its form is one photo and nothing to type; the handover takes
+   * the money, the bill and a photo of the food as it was left.
+   */
+  function formBodyHtml(orderId, submitFnName, kind) {
     var open = !!openForms[orderId];
+    var body = '';
+    if (kind === 'kitchen') {
+      body = '<label>📷 รูปอาหารตอนเสร็จ</label>' +
+        '<input type="file" accept="image/*" id="photo-' + orderId + '" />' +
+        '<div style="font-size:12px;color:var(--ink-2);margin-top:6px">รูปนี้คือหลักฐานว่ากดตอนอาหารเสร็จจริง ไม่ต้องกรอกอะไรเพิ่ม</div>';
+    } else {
+      body = '<label>ยอดเงินจริง</label><input type="number" inputmode="decimal" id="amt-' + orderId + '" placeholder="เช่น 350" />' +
+        '<label>Payment</label><select id="pay-' + orderId + '"><option value="Room Charge">Room Charge</option><option value="Cash">Cash</option><option value="Card">Card</option><option value="QR Code">QR Code</option></select>' +
+        // No `capture` attribute: it forces the camera on many phones, so a bill that
+        // was already photographed (or already handed back) could not be attached at
+        // all.
+        '<label>📸 รูปอาหารตอนวางส่ง</label><input type="file" accept="image/*" id="food-' + orderId + '" />' +
+        '<label>🧾 รูปบิล (แนบได้หลายรูป)</label><input type="file" accept="image/*" multiple id="photo-' + orderId + '" />';
+    }
     return '<div class="miniform' + (open ? ' open' : '') + '" id="form-' + orderId + '">' +
-      '<label>ยอดเงินจริง</label><input type="number" inputmode="decimal" id="amt-' + orderId + '" placeholder="เช่น 350" />' +
-      '<label>Payment</label><select id="pay-' + orderId + '"><option value="Room Charge">Room Charge</option><option value="Cash">Cash</option><option value="Card">Card</option><option value="QR Code">QR Code</option></select>' +
-      // No `capture` attribute: it forces the camera on many phones, so a bill that
-      // was already photographed (or already handed back) could not be attached at
-      // all. `multiple` matches what the Apps Script form has always accepted — a
-      // long bill runs to two pages.
-      '<label>รูปบิล (แนบได้หลายรูป)</label><input type="file" accept="image/*" multiple id="photo-' + orderId + '" />' +
+      body +
       '<button class="actionBtn" style="margin-top:10px" id="submit-' + orderId + '" onclick="' + submitFnName + '(\'' + orderId + '\')">บันทึก</button>' +
       '<div class="err" id="err-' + orderId + '"></div>' +
       '</div>';
@@ -1057,9 +1072,15 @@
         // to sit full-width 8px under the main button — one slip with a wet
         // thumb. Behind ⋯ it always takes two deliberate taps.
         (r.stage < 3 ? '<button id="nudge-' + r.orderId + '" onclick="doNudge(\'' + r.orderId + '\')">🔔 เตือนผู้จัดการร้าน</button>' : '') +
-        (r.billUrls && r.billUrls.length
-          ? '<a href="' + esc(r.billUrls[0]) + '" target="_blank" rel="noopener">🧾 ดูบิลที่ส่งไป (' + r.billUrls.length + ' รูป)</a>'
-          : '<div style="padding:12px 4px;color:var(--ink-2);font-size:15px">🧾 ยังไม่มีรูปบิล</div>') +
+        // One line per photo, each saying what it shows. There are three kinds
+        // now and two of them are the same plate — "ดูรูป (3)" would be
+        // useless for the one job they exist for, telling whether a problem
+        // started in the kitchen or on the way. (Phase 5 §2.4)
+        ((r.photos && r.photos.length)
+          ? r.photos.map(function (p) {
+              return '<a href="' + esc(p.url) + '" target="_blank" rel="noopener">' + esc(p.label) + '</a>';
+            }).join('')
+          : '<div style="padding:12px 4px;color:var(--ink-2);font-size:15px">📷 ยังไม่มีรูป</div>') +
         '<button onclick="showRules()">📋 กติกาค่าปรับ</button>' +
         // Destructive, so it sits at the bottom of a menu that already takes
         // two deliberate taps to open, and asks for a reason before it does
@@ -1525,32 +1546,43 @@
     if (salesFrom && salesTo) loadSales(true);
   });
 
-  function doComplete(orderId) {
-    withButtonBusy('btn-' + orderId, 'กำลังบันทึก...', function () {
-      return callApi('completeOrderDeliveryViaLiff', { idToken: idToken, accessToken: accessToken, orderId: orderId }).then(function (r) {
-        if (!r.ok) { toast(r.reason || r.error || 'ผิดพลาด', true); return; }
-        toast('ส่งมอบ ' + orderId + ' เรียบร้อย');
-        applyLocalStage(orderId, 3);
-        markPending(orderId, 'pending');
-        forceRefresh().then(function () { markPending(orderId, ''); },
-                            function () { markPending(orderId, 'failed'); });
-      });
-    });
-  }
+  // doComplete() lived here: a one-tap close for 24BLVD that wrote no bill and
+  // no amount, because both used to be captured at the kitchen step. They are
+  // captured at handover now, so every close goes through the form and the
+  // backend refuses a 24BLVD order that arrives without a bill. Removed rather
+  // than left unused — a spare one-tap close is exactly the thing that gets
+  // wired back to a button later.
 
-  function submitWithPhoto(orderId, fn, nextStage) {
-    var amount = document.getElementById('amt-' + orderId).value;
-    var payment = document.getElementById('pay-' + orderId).value;
+  function submitWithPhoto(orderId, fn, nextStage, kind) {
+    var isKitchen = kind === 'kitchen';
+    var amountEl = document.getElementById('amt-' + orderId);
+    var paymentEl = document.getElementById('pay-' + orderId);
+    var foodEl = document.getElementById('food-' + orderId);
+    var amount = amountEl ? amountEl.value : '';
+    var payment = paymentEl ? paymentEl.value : '';
     var fileInput = document.getElementById('photo-' + orderId);
     var files = Array.prototype.slice.call(fileInput.files || []).slice(0, 3);
+    var foodFiles = foodEl ? Array.prototype.slice.call(foodEl.files || []).slice(0, 1) : [];
     var errEl = document.getElementById('err-' + orderId);
     var submitBtn = document.getElementById('submit-' + orderId);
     errEl.textContent = '';
-    if (!amount) { errEl.textContent = '⚠ ใส่ยอดเงินที่จ่ายจริงตามบิล'; return; }
-    if (!files.length) { errEl.textContent = '⚠ ถ่ายรูปบิลก่อนบันทึก — ไม่มีบิลจะเคลียร์ยอดสิ้นเดือนไม่ได้'; return; }
+    if (!isKitchen && !amount) { errEl.textContent = '⚠ ใส่ยอดเงินที่จ่ายจริงตามบิล'; return; }
+    // One message per missing photo, naming it — the runner has to know which
+    // one to go and take.
+    if (!isKitchen && !foodFiles.length) { errEl.textContent = '⚠ ยังไม่ได้ถ่ายรูปอาหารตอนวางส่ง'; return; }
+    if (!files.length) {
+      errEl.textContent = isKitchen
+        ? '⚠ ถ่ายรูปอาหาร 1 รูปก่อนกดยืนยัน'
+        : '⚠ ยังไม่ได้ถ่ายรูปบิล — ไม่มีบิลจะเคลียร์ยอดสิ้นเดือนไม่ได้';
+      return;
+    }
     submitBtn.disabled = true;
     errEl.textContent = 'กำลังเตรียมรูป...';
-    shrinkAll(files, function (dataUrls) {
+    shrinkAll(files.concat(foodFiles), function (allUrls) {
+      // shrinkAll keeps the order it was given: bills first, then the single
+      // handover photo appended above.
+      var dataUrls = allUrls.slice(0, files.length);
+      var foodUrls = allUrls.slice(files.length);
       // shrinkPhoto falls back to the ORIGINAL file when canvas fails (out of
       // memory on an older phone with a 12MP photo). A 4MB original becomes
       // ~5.5MB of base64 over hotel wifi and simply times out, and the runner
@@ -1574,11 +1606,18 @@
           '<span style="color:var(--warn-ink);font-weight:600">ไวไฟโรงแรมช้า อาจใช้เวลาถึง 1 นาที · ปิดหน้านี้แล้วรูปจะหาย</span>';
       }, 1000);
       errEl.textContent = 'กำลังส่งบิล… 0 วิ';
-      callApi(fn, {
+      var payload = {
         idToken: idToken, accessToken: accessToken, liffSource: 'order', ticketId: orderId,
-        amount: amount, payment: payment,
-        photoDataUrls: dataUrls.filter(Boolean),
-      }).then(function (r) {
+      };
+      if (isKitchen) {
+        payload.photoDataUrls = dataUrls.filter(Boolean);
+      } else {
+        payload.amount = amount;
+        payload.payment = payment;
+        payload.billPhotoDataUrls = dataUrls.filter(Boolean);
+        payload.foodPhotoDataUrls = foodUrls.filter(Boolean);
+      }
+      callApi(fn, payload).then(function (r) {
         clearInterval(uploadTimer);
         errEl.style.color = '';
         submitBtn.disabled = false;
@@ -1606,8 +1645,8 @@
     })(0);
   }
 
-  function submitFood(orderId) { submitWithPhoto(orderId, 'submitOrderFoodForm', 2); }
-  function submitDeliverForm(orderId) { submitWithPhoto(orderId, 'submitOrderFulfillForm', 3); }
+  function submitFood(orderId) { submitWithPhoto(orderId, 'submitOrderFoodForm', 2, 'kitchen'); }
+  function submitDeliverForm(orderId) { submitWithPhoto(orderId, 'submitOrderFulfillForm', 3, 'handover'); }
 
   function selectTab(tab) {
     currentTab = tab;
