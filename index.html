@@ -165,6 +165,17 @@
   .statBox .v { font-size:20px; font-weight:800; margin-top:4px; line-height:1.2; }
   .statBox .v small { font-size:13px; font-weight:600; color:var(--ink-2); }
   .statBox.wide { grid-column:1 / -1; }
+  .appealRow { padding:12px 0; border-bottom:1px solid var(--line); }
+  .appealRow:last-child { border-bottom:none; }
+  .appealTop { display:flex; justify-content:space-between; gap:10px; font-size:14px; font-weight:600; }
+  .appealMeta { font-size:12px; color:var(--ink-2); margin-top:3px; line-height:1.6; }
+  .appealActions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .appealBtn { flex:1 1 30%; min-height:40px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); font-family:inherit; font-size:13px; font-weight:700; }
+  .appealBtn.warn { border-color:#fca5a5; color:#b91c1c; }
+  .appealBtn[disabled] { opacity:.5; }
+  .reassignRow { display:none; gap:8px; margin-top:8px; }
+  .reassignRow.open { display:flex; }
+  .reassignRow input { flex:1; min-width:0; min-height:40px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
   .zoneRow { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line); font-size:14px; }
   .zoneRow:last-child { border-bottom:none; }
   /* Per-shop takings. A bar against the best-selling shop is read in a glance;
@@ -327,6 +338,11 @@
   function creds() { return { idToken: idToken, accessToken: accessToken }; }
   var me = null;
   var currentTab = 'mine';
+  // Appeals against SLA fines (Phase 4 E1). manager-only: a venue_manager may
+  // read the fine leaderboard for their shop but may not waive a fine on it,
+  // and the backend enforces that independently (requireFullManager_).
+  var appeals = null;
+  var appealBusy = '';
   // '' = every shop. Persists across tabs/polls on purpose: someone who picks
   // "ร้าน A" on "ทั้งหมด" almost always wants that same shop on "สรุปเดือนนี้" too.
   var shopFilter = '';
@@ -812,7 +828,9 @@
     var list = document.getElementById('list');
     if (authState === 'none') { list.innerHTML = noAuthHtml(); return; }
 
-    var html = '<div class="card"><div class="id">🏆 อันดับค่าปรับ SLA</div>' +
+    var html = appealsCardHtml();
+
+    html += '<div class="card"><div class="id">🏆 อันดับค่าปรับ SLA</div>' +
       '<div class="mgrPeriodRow">' +
       [7, 30, 90].map(function (d) {
         return '<button class="shopChip' + (managerDays === d ? ' active' : '') + '" onclick="setManagerDays(' + d + ')">' + d + ' วัน</button>';
@@ -827,8 +845,15 @@
     } else {
       if (managerLeaderboard.isScoped) html += '<div style="font-size:12px;color:var(--ink-2);margin-top:10px">แสดงเฉพาะร้านของคุณ</div>';
       html += managerLeaderboard.rows.map(function (r, i) {
+        // Two figures on purpose: what is settled and collectable, and what is
+        // still inside its appeal window. One blended number is what made the
+        // appeal channel look decorative.
+        var pending = r.pendingAmount
+          ? ' <span style="color:var(--ink-2);font-weight:400">+' + Number(r.pendingAmount).toLocaleString('en-US') + ' รออุทธรณ์</span>'
+          : '';
         return '<div class="sumRow"><span>' + (i + 1) + '. ' + esc(r.name || '(ไม่ทราบชื่อ)') +
-          ' <span style="color:var(--ink-2)">(' + r.count + ' ครั้ง)</span></span><b>' + Number(r.amount).toLocaleString('en-US') + '</b></div>';
+          ' <span style="color:var(--ink-2)">(' + r.count + ' ครั้ง)</span></span><b>' +
+          Number(r.amount).toLocaleString('en-US') + pending + '</b></div>';
       }).join('');
     }
     html += '</div>';
@@ -871,6 +896,97 @@
 
     list.innerHTML = html;
   }
+
+  function isFullManager() { return !!me && me.role === 'manager'; }
+
+  /**
+   * Fines waiting on a decision. Filed appeals come first and carry the three
+   * buttons; the rows nobody has answered yet are listed underneath as a
+   * count, not as work — they close themselves at their due date.
+   */
+  function appealsCardHtml() {
+    if (!isFullManager()) return '';
+    var html = '<div class="card"><div class="id">🙋 อุทธรณ์ค่าปรับ</div>';
+    if (!appeals) return html + '<div style="font-size:13px;color:var(--ink-2);margin-top:10px">กำลังโหลด...</div></div>';
+    if (appeals.error) return html + '<div class="empty" style="padding:16px 0">' + esc(appeals.error) + '</div></div>';
+
+    if (!appeals.filed.length) {
+      html += '<div class="empty" style="padding:16px 0">ไม่มีเรื่องรออุทธรณ์ 🎉</div>';
+    } else {
+      html += appeals.filed.map(function (a) {
+        var key = a.orderId + '|' + a.leg;
+        var busy = appealBusy === key;
+        var d = ' data-appeal="' + escAttr(key) + '"';
+        return '<div class="appealRow">' +
+          '<div class="appealTop"><span>' + esc(a.orderId) + ' · ' + esc(a.leg) + '</span><b>' + Number(a.amount || a.deduction).toLocaleString('en-US') + ' บาท</b></div>' +
+          '<div class="appealMeta">ผู้ถูกหัก: ' + esc(a.charged || '-') + ' · ล่าช้า ' + a.delayMinutes + ' นาที (' + esc(a.band) + ')<br>ครบกำหนด ' + esc(a.dueDate) + '</div>' +
+          '<div class="appealActions">' +
+            '<button class="appealBtn warn"' + d + ' data-act="cancel"' + (busy ? ' disabled' : '') + '>ยกเลิกค่าปรับ</button>' +
+            '<button class="appealBtn"' + d + ' data-act="reassign-open"' + (busy ? ' disabled' : '') + '>เปลี่ยนผู้ถูกหัก</button>' +
+            '<button class="appealBtn"' + d + ' data-act="uphold"' + (busy ? ' disabled' : '') + '>ยืนยันตามเดิม</button>' +
+          '</div>' +
+          '<div class="reassignRow" id="reassign-' + escAttr(key) + '">' +
+            '<input type="text" placeholder="ชื่อคนที่ถูกหักแทน" data-reassign-name="' + escAttr(key) + '" />' +
+            '<button class="appealBtn"' + d + ' data-act="reassign"' + (busy ? ' disabled' : '') + '>บันทึก</button>' +
+          '</div>' +
+          '</div>';
+      }).join('');
+    }
+    if (appeals.pending && appeals.pending.length) {
+      html += '<div class="appealMeta" style="margin-top:12px">ยังอยู่ในช่วงอุทธรณ์อีก ' + appeals.pending.length +
+        ' รายการ — ถ้าไม่มีใครยื่น ระบบจะปิดเองเมื่อครบกำหนด</div>';
+    }
+    return html + '</div>';
+  }
+
+  function loadAppeals() {
+    if (!isFullManager()) return;
+    callApi('slaAppealsViaLiff', creds()).then(function (r) {
+      appeals = (r && r.error) ? r : (r || { error: 'โหลดไม่สำเร็จ' });
+    }).catch(function () {
+      appeals = { error: 'โหลดไม่สำเร็จ ลองใหม่อีกครั้ง' };
+    }).then(function () {
+      if (currentTab === 'manager') renderManager();
+    });
+  }
+
+  document.getElementById('list').addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-appeal]');
+    if (!btn) return;
+    var key = btn.getAttribute('data-appeal');
+    var act = btn.getAttribute('data-act');
+    if (act === 'reassign-open') {
+      var row = document.getElementById('reassign-' + key);
+      if (row) row.classList.toggle('open');
+      return;
+    }
+    var parts = key.split('|');
+    var payload = creds();
+    payload.orderId = parts[0];
+    payload.leg = parts[1];
+    payload.decision = act;
+    if (act === 'reassign') {
+      var input = document.querySelector('[data-reassign-name="' + key.replace(/"/g, '') + '"]');
+      var name = input ? input.value.trim() : '';
+      if (!name) { toast('ใส่ชื่อคนที่จะถูกหักแทนก่อน', true); return; }
+      payload.toName = name;
+    }
+    appealBusy = key;
+    renderManager();
+    callApi('decideSlaAppealViaLiff', payload).then(function (r) {
+      if (!r || r.error) { toast((r && r.error) || 'บันทึกไม่สำเร็จ', true); return; }
+      toast('บันทึกแล้ว');
+      appeals = null;
+      loadAppeals();
+      managerLeaderboard = null;
+      loadManagerLeaderboard();
+    }).catch(function () {
+      toast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง', true);
+    }).then(function () {
+      appealBusy = '';
+      if (currentTab === 'manager') renderManager();
+    });
+  });
 
   function loadManagerLeaderboard() {
     var payload = creds();
@@ -1520,9 +1636,11 @@
     if (!managerMonthKey) managerMonthKey = thisMonthKey_();
     managerLeaderboard = null;
     managerRecon = null;
+    appeals = null;
     selectTab('manager');
     loadManagerLeaderboard();
     loadManagerRecon();
+    loadAppeals();
   });
 
   // Pausing the poll while the tab/webview is hidden (backgrounded) saves
