@@ -27,31 +27,29 @@
      number and a Thai word finally sits on one baseline. -->
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
+  /* Phase 12 §4 — dark unconditionally, not only when the phone happens to be
+     in dark mode.
+     The dark values already existed, but lived inside a
+     @media (prefers-color-scheme: dark) block, so a phone set to light — which
+     is most of them — got the white page the owner photographed. The cards in
+     LINE are dark in both LINE themes (Phase 9 §4.4.6), and the whole point was
+     that every member of staff sees the same thing; a board that follows the
+     handset breaks that and blinds whoever opens it at 01:00 in a dark bar.
+     Same values as ORDER_DARK_ in line-core.js, so board, cards and forms are
+     one product. */
   :root {
-    --bg:#F4F6F9; --card:#FFFFFF; --line:#E3E8EF;
-    --ink:#0B1220;    /* 18.9:1 on card */
-    --ink-2:#566172;  /* 6.3:1 — replaces #777 at 4.48:1, which failed AA */
-    --ink-3:#1F2937;  /* 15.3:1 — the order items themselves, the thing being fetched */
-    --ok:#15803D;
-    --warn-bg:#FEF3C7; --warn-ink:#92400E;  /* 6.4:1 */
-    --hot-bg:#FFEDD5;  --hot-ink:#7C2D12;   /* 8.9:1 */
-    --free-bg:#EAF2FF; --free-ink:#1E40AF;  /* 8.1:1 */
-    --danger:#B91C1C;
+    color-scheme: dark;   /* scrollbars, and any control the browser draws itself */
+    --bg:#0B1220; --card:#161E2E; --line:#2A3446;
+    --ink:#E8EDF4;
+    --ink-2:#9AA7B8;
+    --ink-3:#D5DDE8;   /* the order items — the thing being fetched */
+    --ok:#4ADE80;
+    --warn-bg:#3A2E0B; --warn-ink:#FCD34D;
+    --hot-bg:#3A210B;  --hot-ink:#FDBA74;
+    --free-bg:#12233F; --free-ink:#93C5FD;
+    --danger:#F87171;
     --btn-h:56px; --btn-r:12px; --card-r:16px; --gap:12px; --pad:16px;
     --head-h:64px; --tabs-h:48px;
-  }
-  /* Night shift in a dark bar: a full-screen white page at 01:00 blinds the
-     runner for a couple of seconds every time they open the app, and flashes
-     in the guests' eyes. Status pairs keep their contrast when inverted. */
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg:#0B1220; --card:#161E2E; --line:#2A3446;
-      --ink:#E8EDF4; --ink-2:#9AA7B8; --ink-3:#D5DDE8;
-      --warn-bg:#3A2E0B; --warn-ink:#FCD34D;
-      --hot-bg:#3A210B;  --hot-ink:#FDBA74;
-      --free-bg:#12233F; --free-ink:#93C5FD;
-      --ok:#4ADE80; --danger:#F87171;
-    }
   }
   * { box-sizing: border-box; }
   body { margin:0; font-family:'IBM Plex Sans Thai',-apple-system,'Helvetica Neue',sans-serif; background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased; padding-bottom:70px; }
@@ -60,7 +58,7 @@
   header .who { font-size:12px; color:#cfd2d6; margin-top:3px; min-height:15px; }
   header .headRow { display:flex; align-items:center; gap:12px; }
   header #avatar { width:42px; height:42px; border-radius:50%; object-fit:cover; background:#333; display:none; }
-  .nudgeBtn { margin-top:8px; width:100%; min-height:38px; border:1px solid var(--line); border-radius:10px; background:#fff; color:#000; font-size:13px; font-weight:600; }
+  .nudgeBtn { margin-top:8px; width:100%; min-height:38px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--ink); font-size:13px; font-weight:600; }
   .sumRow { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px; }
   .sumRow:last-child { border-bottom:none; }
   .sumTotal { display:flex; justify-content:space-between; padding:14px 0 0; font-weight:800; font-size:16px; }
@@ -92,7 +90,7 @@
   .rowMini { display:flex; align-items:center; gap:12px; }
   .rowMini .body { flex:1; min-width:0; }
   .rowMini .body .items { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .miniBtn { width:112px; min-height:72px; border:none; border-radius:var(--btn-r); background:var(--ok); color:#fff; font-size:15px; font-weight:700; }
+  .miniBtn { width:112px; min-height:72px; border:none; border-radius:var(--btn-r); background:var(--ok); color:#06210F; font-size:15px; font-weight:700; }
   .moreBtn { position:absolute; right:10px; bottom:10px; width:36px; height:36px; border:none; background:none; color:var(--ink-2); font-size:20px; }
   .moreMenu { margin-top:12px; border-top:1px solid var(--line); padding-top:10px; display:none; }
   .moreMenu.open { display:block; }
@@ -114,12 +112,12 @@
   /* 56px, not 46px: one wet hand, gloves, in a hurry, and pressing the wrong
      one costs real money. */
   .actionBtn { margin-top:16px; width:100%; min-height:var(--btn-h); border:none; border-radius:var(--btn-r); font-weight:700; font-size:17px; font-family:inherit; background:var(--ink); color:var(--card); }
-  .actionBtn.green { background:var(--ok); color:#fff; }
+  .actionBtn.green { background:var(--ok); color:#06210F; }
   .actionBtn:active { transform:scale(.98); }
   /* Never fade a working button: in a dark room a faded button reads as "it
      didn't register" and the runner presses again. Go darker instead. */
   .actionBtn.busy { background:#374151; color:#fff; }
-  .actionBtn.ok { background:var(--ok); color:#fff; }
+  .actionBtn.ok { background:var(--ok); color:#06210F; }
   .actionBtn.fail { background:var(--danger); color:#fff; }
   .actionBtn[disabled]:not(.busy):not(.ok):not(.fail) { background:var(--line); color:var(--ink-2); }
   .miniform { margin-top:12px; border-top:1px solid var(--line); padding-top:12px; display:none; }
@@ -131,7 +129,7 @@
   .miniform .err { color:var(--danger); font-size:15px; font-weight:600; margin-top:10px; min-height:18px; line-height:1.5; }
   #boot { text-align:center; padding:80px 20px; color:var(--ink-2); }
   #lastUpdated { text-align:center; font-size:12px; color:var(--ink-2); padding:10px; }
-  #toast { position:fixed; left:16px; right:16px; top:calc(var(--head-h) + var(--tabs-h) + 8px); background:#000; color:#fff; padding:12px 16px; border-radius:10px; font-size:14px; text-align:center; transform:translateY(120%); transition:transform .25s; z-index:20; }
+  #toast { position:fixed; left:16px; right:16px; top:calc(var(--head-h) + var(--tabs-h) + 8px); background:#2A3446; color:var(--ink); border:1px solid var(--line); padding:12px 16px; border-radius:10px; font-size:14px; text-align:center; transform:translateY(120%); transition:transform .25s; z-index:20; }
   /* Hidden must mean HIDDEN. translateY(-140%) is 140% of the toast's own
      height — about 50px — which parked it right on top of the tab bar instead
      of off-screen. Opacity + visibility cannot be off by a few pixels. */
@@ -249,7 +247,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v23';
+  var BUILD = 'v25';
   var LIFF_ID = '2011319750-tMh303eW';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
@@ -748,8 +746,29 @@
           ? '<div style="margin-top:12px;padding:10px 12px;background:#fef2f2;color:#991b1b;border-radius:8px;font-size:13px;font-weight:700">' +
             '🧹 ค้างข้ามรอบ ' + sales.staleCount + ' ออเดอร์ — ต้องไปเคลียร์</div>'
           : '') +
+        // Phase 8 §7/§8.1 — two zone breakdowns, and the labels have to say
+        // which is which. bySellerZone groups by the shop that FILLED the
+        // order (24BLVD vs Fairway), which is what the owner asked to see.
+        // byZone groups by who PLACED it and reads "โรงแรม" nearly all the way
+        // down, because that is what a hotel ordering from its own shops looks
+        // like. Both answer real questions; either one labelled just "โซน" is
+        // how one gets read as the other.
+        (sales.bySellerZone && sales.bySellerZone.length
+          ? '<div style="margin-top:16px"><div class="k" style="font-size:12px;color:var(--ink-2);font-weight:600">ขายโดยโซน</div>' +
+            sales.bySellerZone.map(function (z) {
+              return '<div class="zoneRow"><span>' + esc(z.zone) +
+                ' <span style="color:var(--ink-2)">(' + z.count + ' ใบ · ค้าง ' + (z.open || 0) + ')</span></span><b>' + baht(z.amount) + '</b></div>';
+            }).join('') +
+            // A split with no total leaves the reader adding it up in their head
+            // every single time.
+            '<div class="zoneRow" style="border-top:1px solid var(--line);font-weight:700"><span>รวมทุกโซน <span style="color:var(--ink-2)">(' +
+              sales.bySellerZone.reduce(function (a, z) { return a + z.count; }, 0) + ' ใบ · ค้าง ' +
+              sales.bySellerZone.reduce(function (a, z) { return a + (z.open || 0); }, 0) + ')</span></span><b>' +
+              baht(sales.bySellerZone.reduce(function (a, z) { return a + z.amount; }, 0)) + '</b></div>' +
+            '</div>'
+          : '') +
         (sales.byZone && sales.byZone.length
-          ? '<div style="margin-top:16px"><div class="k" style="font-size:12px;color:var(--ink-2);font-weight:600">แยกตามโซน</div>' +
+          ? '<div style="margin-top:16px"><div class="k" style="font-size:12px;color:var(--ink-2);font-weight:600">สั่งโดย</div>' +
             sales.byZone.map(function (z) {
               return '<div class="zoneRow"><span>' + esc(z.zone) + ' <span style="color:var(--ink-2)">(' + z.count + ')</span></span><b>' + baht(z.amount) + '</b></div>';
             }).join('') + '</div>'
