@@ -217,7 +217,7 @@
 
 <div id="boot">
   <div style="font-size:32px">🛎️</div>
-  <div style="margin-top:8px">กำลังเชื่อมต่อ LINE...</div>
+  <div style="margin-top:8px">Connecting to LINE...</div>
 </div>
 
 <div id="app" style="display:none">
@@ -231,16 +231,16 @@
     </div>
   </header>
   <div class="tabs">
-    <button id="tabMine" class="active">ต้องทำ</button>
-    <button id="tabAll">ทั้งหมด</button>
+    <button id="tabMine" class="active">To do</button>
+    <button id="tabAll">All</button>
     <button id="tabSummary">สรุปเดือนนี้</button>
     <!-- Hidden until whoAmI resolves a manager/venue_manager role — 'staff'
          never sees this tab exist, same boundary the backend enforces. -->
     <button id="tabManager" style="display:none">ผู้บริหาร</button>
   </div>
-  <div id="offlineBar"><span id="offlineText"></span><button onclick="forceRefresh()">ลองใหม่</button></div>
+  <div id="offlineBar"><span id="offlineText"></span><button onclick="forceRefresh()">Try again</button></div>
   <div id="scopeBanner" style="display:none"></div>
-  <div id="learnBar"><span id="learnText"></span><button onclick="hideLearnBar()">ซ่อน</button></div>
+  <div id="learnBar"><span id="learnText"></span><button onclick="hideLearnBar()">Hide</button></div>
   <div id="unknownBox" class="unknownBox" style="display:none"></div>
   <div id="shopFilterBar"></div>
   <div id="list"></div>
@@ -330,8 +330,8 @@
   // "รอร้านรับ" leaves the shop that placed the order unsure whose move it is.
   // The server also sends r.stageLabel; this array is the fallback for a row
   // fetched before that field existed.
-  var STAGE_LABELS = ['รอร้านรับ', 'เตรียมอาหาร', 'กำลังจัดส่ง', 'ส่งมอบแล้ว'];
-  var STAGE_LABELS_SELL = ['รอร้านที่ถูกสั่งยืนยัน', 'กำลังเตรียมของ', 'กำลังส่ง', 'ส่งมอบแล้ว'];
+  var STAGE_LABELS = ['Waiting to be taken', 'Being made', 'On the way', 'Delivered'];
+  var STAGE_LABELS_SELL = ['Waiting for the other shop', 'Being prepared', 'On the way', 'Delivered'];
   function stageLabelOf(r) {
     if (r && r.stageLabel) return String(r.stageLabel).replace(/^[^\u0E00-\u0E7Fa-zA-Z]+/, '');
     return (r && r.isSell ? STAGE_LABELS_SELL : STAGE_LABELS)[(r && r.stage) || 0];
@@ -405,7 +405,7 @@
   function shopFilterLabel() {
     if (!shopFilters.length) return '';
     if (shopFilters.length <= 2) return shopFilters.join(' + ');
-    return shopFilters.length + ' ร้าน';
+    return shopFilters.length + ' shops';
   }
   /** Shops that belong to the picked zone, from the zone the backend stamped on each row. */
   function shopsInZone(shops, zoneOf) {
@@ -453,8 +453,8 @@
   // showing none of it: the same button costs 0฿ on one card and 200฿ on the
   // next, and nothing on screen said which. That is not a polish problem, it
   // is a fairness problem.
-  var CASHIER_100 = 300, CASHIER_200 = 480, CASHIER_RESCUE = 900; // seconds — 5 / 8 / 15 นาที
-  var KITCHEN_LIMIT = 1020; // 17 นาที — just under the 18-minute kitchen budget
+  var CASHIER_100 = 300, CASHIER_200 = 480, CASHIER_RESCUE = 900; // seconds — 5 / 8 / 15 minutes
+  var KITCHEN_LIMIT = 1020; // 17 minutes — just under the 18-minute kitchen budget
 
   /** Seconds since a "yyyy-MM-dd HH:mm:ss" stamp, measured against the SERVER
    *  clock we were handed, not the phone's — an old handset is routinely
@@ -478,7 +478,7 @@
     var m = Math.floor(sec / 60), ss = sec % 60;
     return m + ':' + (ss < 10 ? '0' + ss : ss);
   }
-  function humanMins(sec) { return Math.floor(sec / 60) + ' นาที'; }
+  function humanMins(sec) { return Math.floor(sec / 60) + ' min'; }
   function pad2(n) { return n < 10 ? '0' + n : String(n); }
   function thisMonthKey_() { var d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1); }
 
@@ -493,24 +493,24 @@
     var sec = secondsSince(r.orderedAt);
     if (sec >= CASHIER_RESCUE) {
       return { tier: 'free', group: 2, sec: sec,
-        text: '🅿 ค้าง ' + humanMins(sec) + ' · ใบนี้ไม่หักคุณ' };
+        text: '🅿 waiting ' + humanMins(sec) + ' · you are not charged for this one' };
     }
     if (sec >= CASHIER_200) {
       return { tier: 'hot', group: 1, sec: sec,
-        text: '⏱ ' + mmss(sec) + '  เกณฑ์ 200฿ · อีก ' + mmss(CASHIER_RESCUE - sec) + ' จะเป็นออเดอร์ค้าง (ไม่หักคุณ)' };
+        text: '⏱ ' + mmss(sec) + '  at 200฿ · in ' + mmss(CASHIER_RESCUE - sec) + ' it becomes a left-waiting order (no charge to you)' };
     }
     if (sec >= CASHIER_100) {
       return { tier: 'hot', group: 1, sec: sec,
-        text: '⏱ ' + mmss(sec) + '  เลยเกณฑ์ 100฿ · เหลือ ' + mmss(CASHIER_200 - sec) + ' ก่อนขึ้น 200฿' };
+        text: '⏱ ' + mmss(sec) + '  past 100฿ · ' + mmss(CASHIER_200 - sec) + ' before it becomes 200฿' };
     }
     if (sec >= 180) {
       var left = CASHIER_100 - sec;
       return { tier: 'warn', group: 1, sec: sec,
         // Seconds only inside the last minute; eight cards all ticking their
         // seconds at once is unreadable and just makes the screen feel frantic.
-        text: '⏱ ' + mmss(sec) + '  เหลือ ' + (left < 60 ? left + ' วิ' : mmss(left)) + ' ก่อนถึงเกณฑ์ 100฿' };
+        text: '⏱ ' + mmss(sec) + '  ' + (left < 60 ? left + ' sec' : mmss(left)) + ' before it reaches 100฿' };
     }
-    return { tier: 'calm', group: 4, sec: sec, text: '⏱ ' + mmss(sec) + ' · ยังมีเวลา' };
+    return { tier: 'calm', group: 4, sec: sec, text: '⏱ ' + mmss(sec) + ' · still in time' };
   }
 
   /** The kitchen window is charged to the kitchen lead, never to the runner who
@@ -519,9 +519,9 @@
   function kitchenClock(r) {
     var sec = secondsSince(r.keyedAt);
     if (sec >= KITCHEN_LIMIT) {
-      return { tier: 'free', sec: sec, text: '🍳 ครัวทำมา ' + humanMins(sec) + ' · เกินเกณฑ์ครัวแล้ว — กดได้เลย ไม่หักคุณ' };
+      return { tier: 'free', sec: sec, text: '🍳 in the kitchen ' + humanMins(sec) + ' · past the kitchen target — tap it, you are not charged' };
     }
-    return { tier: 'calm', sec: sec, text: '🍳 ครัวทำมา ' + humanMins(sec) };
+    return { tier: 'calm', sec: sec, text: '🍳 in the kitchen ' + humanMins(sec) };
   }
 
   function clockFor(r) {
@@ -541,9 +541,9 @@
     if (!r || !r.dueAt || r.stage >= 3 || r.isCancelled) return null;
     var leftSec = Math.round((parseServerStamp(r.dueAt) - serverNowEstimate()) / 1000);
     var leftMin = Math.round(leftSec / 60);
-    if (leftSec < 0) return { tier: 'late', text: '🔴 เกินเป้า ' + humanMins(-leftSec) + ' (เป้า ' + r.targetMinutes + ' นาที)' };
-    if (leftSec <= 600) return { tier: 'soon', text: '🟡 เหลือ ' + (leftSec < 60 ? leftSec + ' วิ' : leftMin + ' นาที') + ' ถึงเป้า ' + r.targetMinutes + ' นาที' };
-    return { tier: 'ok', text: '🟢 เหลือ ' + leftMin + ' นาที (เป้า ' + r.targetMinutes + ' นาที)' };
+    if (leftSec < 0) return { tier: 'late', text: '🔴 over by ' + humanMins(-leftSec) + ' (target ' + r.targetMinutes + ' min)' };
+    if (leftSec <= 600) return { tier: 'soon', text: '🟡 ' + (leftSec < 60 ? leftSec + ' sec' : leftMin + ' min') + ' left of the ' + r.targetMinutes + ' min target' };
+    return { tier: 'ok', text: '🟢 ' + leftMin + ' min left (target ' + r.targetMinutes + ' min)' };
   }
 
   /** "2026-09-10 01:20:00" -> epoch ms, parsed field by field (see orderParseTime_ on the backend). */
@@ -605,7 +605,7 @@
     var html = '';
     if (zones.length > 1) {
       html += '<div class="shopChipRow zoneRow">' +
-        '<button class="shopChip zoneChip' + (zoneFilter === '' ? ' active' : '') + '" data-zone="">ทุกโซน</button>' +
+        '<button class="shopChip zoneChip' + (zoneFilter === '' ? ' active' : '') + '" data-zone="">All zones</button>' +
         zones.map(function (z) {
           return '<button class="shopChip zoneChip' + (zoneFilter === z ? ' active' : '') + '" data-zone="' + escAttr(z) + '">' + esc(z) + '</button>';
         }).join('') +
@@ -613,7 +613,7 @@
     }
     if (visible.length >= 2) {
       html += '<div class="shopChipRow">' +
-        '<button class="shopChip' + (shopFilters.length === 0 ? ' active' : '') + '" data-shop="">ทุกร้าน</button>' +
+        '<button class="shopChip' + (shopFilters.length === 0 ? ' active' : '') + '" data-shop="">All shops</button>' +
         visible.map(function (s) {
           return '<button class="shopChip' + (shopSelected(s) ? ' active' : '') + '" data-shop="' + escAttr(s) + '">' +
             (shopSelected(s) ? '✓ ' : '') + esc(s) + '</button>';
@@ -672,9 +672,9 @@
     var box = document.getElementById('unknownBox');
     if (!box) return;
     if (!me || me.known !== false) { box.style.display = 'none'; box.innerHTML = ''; return; }
-    box.innerHTML = '<b>ระบบยังไม่รู้จักคุณ</b><br>ให้ผู้ดูแลเพิ่ม ID นี้ในแท็บ <b>Staff_Registry</b> แล้วเปิดหน้านี้ใหม่' +
+    box.innerHTML = '<b>The system does not know you yet</b><br>Ask an admin to add this ID to the <b>Staff_Registry</b> tab, then reopen this page' +
       '<code id="myUserId">' + esc(me.userId) + '</code>' +
-      '<button onclick="copyMyUserId()">📋 ก๊อป ID</button>';
+      '<button onclick="copyMyUserId()">📋 Copy ID</button>';
     box.style.display = 'block';
   }
 
@@ -683,7 +683,7 @@
     if (!text) return;
     // The LINE webview blocks the async clipboard API often enough that a
     // silent failure is the norm; the textarea fallback is what actually works.
-    var done = function () { toast('ก๊อป ID แล้ว'); };
+    var done = function () { toast('ID copied'); };
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(done, function () { legacyCopy(text, done); });
@@ -704,7 +704,7 @@
       document.body.removeChild(ta);
       done();
     } catch (e) {
-      toast('ก๊อปไม่สำเร็จ — กดค้างที่ ID เพื่อคัดลอกเอง', true);
+      toast('Could not copy — press and hold the ID to copy it yourself', true);
     }
   }
 
@@ -723,7 +723,7 @@
     var pct = Math.round((stage / 3) * 100);
     return '<div class="progress">' +
       '<div class="track"><div class="fill" style="width:' + pct + '%"></div></div>' +
-      '<div class="label"><span>ขั้น ' + (stage + 1) + '/4</span><b>' + esc(stageLabelOf(r)) + '</b></div>' +
+      '<div class="label"><span>Step ' + (stage + 1) + '/4</span><b>' + esc(stageLabelOf(r)) + '</b></div>' +
       '</div>';
   }
 
@@ -750,25 +750,25 @@
   function actionSectionHtml(row, mini) {
     if (row.stage === 3) return '';
     if (row.stage === 0) {
-      return '<button class="actionBtn" id="btn-' + row.orderId + '" onclick="doClaim(\'' + row.orderId + '\')">รับออเดอร์นี้</button>';
+      return '<button class="actionBtn" id="btn-' + row.orderId + '" onclick="doClaim(\'' + row.orderId + '\')">Take this order</button>';
     }
     if (mini) {
       // Claimed work is a compact row: the runner already knows what it is.
-      var label = (row.stage === 1 && row.is24) ? 'อาหารเสร็จ'
-        : (row.stage === 1) ? 'ส่งแล้ว'
-        : 'ส่งมอบ';
+      var label = (row.stage === 1 && row.is24) ? 'Food ready'
+        : (row.stage === 1) ? 'Delivered'
+        : 'Deliver';
       // Every step opens a form now: the bare 24BLVD close was what let an
       // order finish with no bill and no amount, and the backend refuses it.
       return '<button class="miniBtn" id="btn-' + row.orderId + '" onclick="toggleForm(\'' + row.orderId + '\')">' + label + '</button>';
     }
     if (row.stage === 1 && row.is24) {
-      return miniFormHtml(row.orderId, '🍳 อาหารเสร็จแล้ว (ครัวกด)', 'submitFood', 'kitchen');
+      return miniFormHtml(row.orderId, '🍳 Food ready (kitchen taps this)', 'submitFood', 'kitchen');
     }
     if (row.stage === 1 && !row.is24) {
-      return miniFormHtml(row.orderId, '✅ ส่งแล้ว (แนบบิล)', 'submitDeliverForm', 'handover');
+      return miniFormHtml(row.orderId, '✅ Mark delivered + bill', 'submitDeliverForm', 'handover');
     }
     if (row.stage === 2 && row.is24) {
-      return miniFormHtml(row.orderId, '✅ ส่งมอบแล้ว (ถ่ายรูป+บิล)', 'submitDeliverForm', 'handover');
+      return miniFormHtml(row.orderId, '✅ Mark delivered + bill', 'submitDeliverForm', 'handover');
     }
     return '';
   }
@@ -795,21 +795,21 @@
     var open = !!openForms[orderId];
     var body = '';
     if (kind === 'kitchen') {
-      body = '<label>📷 รูปอาหารตอนเสร็จ</label>' +
+      body = '<label>📷 Photo of the food</label>' +
         '<input type="file" accept="image/*" id="photo-' + orderId + '" />' +
-        '<div style="font-size:12px;color:var(--ink-2);margin-top:6px">รูปนี้คือหลักฐานว่ากดตอนอาหารเสร็จจริง ไม่ต้องกรอกอะไรเพิ่ม</div>';
+        '<div style="font-size:12px;color:var(--ink-2);margin-top:6px">This photo shows the food was ready when you tapped. Nothing else to fill in.</div>';
     } else {
-      body = '<label>ยอดเงินจริง</label><input type="number" inputmode="decimal" id="amt-' + orderId + '" placeholder="เช่น 350" />' +
+      body = '<label>Amount paid</label><input type="number" inputmode="decimal" id="amt-' + orderId + '" placeholder="e.g. 350" />' +
         '<label>Payment</label><select id="pay-' + orderId + '"><option value="Room Charge">Room Charge</option><option value="Cash">Cash</option><option value="Card">Card</option><option value="QR Code">QR Code</option></select>' +
         // No `capture` attribute: it forces the camera on many phones, so a bill that
         // was already photographed (or already handed back) could not be attached at
         // all.
-        '<label>📸 รูปอาหารตอนวางส่ง</label><input type="file" accept="image/*" id="food-' + orderId + '" />' +
-        '<label>🧾 รูปบิล (แนบได้หลายรูป)</label><input type="file" accept="image/*" multiple id="photo-' + orderId + '" />';
+        '<label>📸 Photo of the food as delivered</label><input type="file" accept="image/*" id="food-' + orderId + '" />' +
+        '<label>🧾 Photo of the bill (more than one is fine)</label><input type="file" accept="image/*" multiple id="photo-' + orderId + '" />';
     }
     return '<div class="miniform' + (open ? ' open' : '') + '" id="form-' + orderId + '">' +
       body +
-      '<button class="actionBtn" style="margin-top:10px" id="submit-' + orderId + '" onclick="' + submitFnName + '(\'' + orderId + '\')">บันทึก</button>' +
+      '<button class="actionBtn" style="margin-top:10px" id="submit-' + orderId + '" onclick="' + submitFnName + '(\'' + orderId + '\')">Save</button>' +
       '<div class="err" id="err-' + orderId + '"></div>' +
       '</div>';
   }
@@ -824,16 +824,16 @@
 
   function skeletonCards() {
     var one = '<div class="card skeleton"><div class="id">ORD_20260101_01</div>' +
-      '<div class="title">กำลังโหลด...</div><div class="items">กำลังโหลดรายการ...</div></div>';
+      '<div class="title">Loading...</div><div class="items">Loading items...</div></div>';
     return one + one + one;
   }
 
   function noAuthHtml() {
     return '<div class="empty"><div style="font-size:40px">🔒</div>' +
-      '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ต้องเปิดจากไลน์เท่านั้น</div>' +
-      '<div style="font-size:15px;margin-top:10px;line-height:1.7">หน้านี้แสดงเลขห้องและรายการของแขก<br>' +
-      'จึงเปิดจากเบราว์เซอร์ธรรมดาไม่ได้<br><br>' +
-      'ไปที่กลุ่มออเดอร์ในไลน์ แล้วกดปุ่ม<br><b>"📦 ดูสถานะออเดอร์"</b></div></div>';
+      '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">Opens from LINE only</div>' +
+      '<div style="font-size:15px;margin-top:10px;line-height:1.7">This page shows room numbers and what guests ordered,<br>' +
+      'so it cannot be opened in an ordinary browser.<br><br>' +
+      'Go to the order group in LINE and tap<br><b>"📦 See order status"</b></div></div>';
   }
 
   // "7 วัน" and "สัปดาห์นี้" are deliberately separate chips: one is a rolling
@@ -1264,9 +1264,9 @@
   ];
   var group4Open = false;
   function cardHtml(r) {
-    var title = r.isSell ? (esc(r.buyer) + ' สั่งจาก ' + esc(r.seller)) : esc(r.subtitle);
-    var sub = r.isSell ? ('สั่งข้ามร้าน — ' + esc(r.seller) + ' เป็นคนเตรียม') : esc(r.seller);
-    if (r.orderedByName) sub += ' · สั่งโดย ' + esc(r.orderedByName);
+    var title = r.isSell ? (esc(r.buyer) + ' → ' + esc(r.seller)) : esc(r.subtitle);
+    var sub = r.isSell ? ('Shop to shop — ' + esc(r.seller) + ' prepares it') : esc(r.seller);
+    if (r.orderedByName) sub += ' · ordered by ' + esc(r.orderedByName);
     var c = clockFor(r);
     var promise = promiseClock(r);
     var menuOpen = !!openMenus[r.orderId];
@@ -1278,16 +1278,16 @@
       // the person pressing is exposed, this says whether the promise is
       // still intact. They are not the same question and the runner needs both.
       (promise ? '<div class="promise ' + promise.tier + '" id="pro-' + r.orderId + '">' + esc(promise.text) + '</div>' : '') +
-      (r.isCancelled ? '<div class="promise late">🚫 ยกเลิกแล้ว</div>' : '') +
+      (r.isCancelled ? '<div class="promise late">🚫 Cancelled</div>' : '') +
       '<div class="items">' + esc(r.items) + '</div>' +
       actionSectionHtml(r) +
-      '<button class="moreBtn" onclick="toggleMenu(\'' + r.orderId + '\')" aria-label="ตัวเลือกเพิ่มเติม">⋯</button>' +
+      '<button class="moreBtn" onclick="toggleMenu(\'' + r.orderId + '\')" aria-label="More options">⋯</button>' +
       '<div class="moreMenu' + (menuOpen ? ' open' : '') + '" id="menu-' + r.orderId + '">' +
         '<div style="font-size:12px;color:var(--ink-2);padding:0 4px 4px">' + esc(r.orderId) + '</div>' +
         // 🔔 fires a real, billed LINE push and wakes a manager at 01:00. It used
         // to sit full-width 8px under the main button — one slip with a wet
         // thumb. Behind ⋯ it always takes two deliberate taps.
-        (r.stage < 3 ? '<button id="nudge-' + r.orderId + '" onclick="doNudge(\'' + r.orderId + '\')">🔔 เตือนผู้จัดการร้าน</button>' : '') +
+        (r.stage < 3 ? '<button id="nudge-' + r.orderId + '" onclick="doNudge(\'' + r.orderId + '\')">🔔 Nudge the shop manager</button>' : '') +
         // One line per photo, each saying what it shows. There are three kinds
         // now and two of them are the same plate — "ดูรูป (3)" would be
         // useless for the one job they exist for, telling whether a problem
@@ -1296,13 +1296,13 @@
           ? r.photos.map(function (p) {
               return '<a href="' + esc(p.url) + '" target="_blank" rel="noopener">' + esc(p.label) + '</a>';
             }).join('')
-          : '<div style="padding:12px 4px;color:var(--ink-2);font-size:15px">📷 ยังไม่มีรูป</div>') +
-        '<button onclick="showRules()">📋 กติกาค่าปรับ</button>' +
+          : '<div style="padding:12px 4px;color:var(--ink-2);font-size:15px">📷 No photos yet</div>') +
+        '<button onclick="showRules()">📋 Fine rules</button>' +
         // Destructive, so it sits at the bottom of a menu that already takes
         // two deliberate taps to open, and asks for a reason before it does
         // anything (the backend refuses a cancellation without one).
         (r.stage < 3 && !r.isCancelled
-          ? '<button style="color:#b91c1c;font-weight:700" onclick="askCancel(\'' + r.orderId + '\')">🚫 ยกเลิกออเดอร์</button>'
+          ? '<button style="color:#b91c1c;font-weight:700" onclick="askCancel(\'' + r.orderId + '\')">🚫 Cancel order</button>'
           : '') +
       '</div>' +
       '</div>';
@@ -1347,11 +1347,11 @@
     if (rows.length === 0) {
       list.innerHTML = (shopFilters.length || zoneFilter)
         ? '<div class="empty"><div style="font-size:40px">🌙</div>' +
-          '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ไม่มีออเดอร์ค้างของ "' + esc(shopFilterLabel() || zoneFilter) + '" ตอนนี้</div></div>'
+          '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">Nothing open for "' + esc(shopFilterLabel() || zoneFilter) + '" right now</div></div>'
         : '<div class="empty"><div style="font-size:40px">🌙</div>' +
-          '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ไม่มีออเดอร์ค้างตอนนี้</div>' +
+          '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">Nothing open right now</div>' +
           // The real ambiguity is "no work" versus "the app is broken" — say which.
-          '<div style="font-size:15px;margin-top:10px;line-height:1.6">หน้าจอจะขึ้นเองเมื่อมีออเดอร์ใหม่<br>ไม่ต้องคอยกดรีเฟรช</div></div>';
+          '<div style="font-size:15px;margin-top:10px;line-height:1.6">New orders appear on their own.<br>No need to keep refreshing.</div></div>';
       return;
     }
 
@@ -1397,7 +1397,7 @@
     var bar = document.getElementById('learnBar');
     if (!pendingReorder) { if (bar.dataset.mode === 'reorder') { bar.style.display = 'none'; bar.dataset.mode = ''; } return; }
     bar.dataset.mode = 'reorder';
-    document.getElementById('learnText').textContent = '↑ มีใบที่ควรกดก่อน — แตะเพื่อจัดใหม่';
+    document.getElementById('learnText').textContent = '↑ Something needs doing first — tap to reorder';
     bar.style.display = 'flex';
     bar.onclick = function () { pendingReorder = false; render(); };
   }
@@ -1407,7 +1407,16 @@
     if (bar.dataset.mode !== 'reorder') { try { localStorage.setItem('learnHidden', '1'); } catch (e) {} }
   }
 
+  // The VALUES are Thai because that is what gets written to the sheet and what
+  // months of past cancellations are keyed on (same rule as the backend's
+  // ORDER_CANCEL_REASONS_). Only the button label is English.
   var CANCEL_REASONS = ['แขกยกเลิก', 'สั่งผิด', 'ของหมด', 'อื่นๆ'];
+  var CANCEL_REASON_LABELS = {
+    'แขกยกเลิก': 'Guest cancelled',
+    'สั่งผิด': 'Ordered by mistake',
+    'ของหมด': 'Sold out',
+    'อื่นๆ': 'Other',
+  };
 
   /**
    * Two steps on purpose. A one-tap cancel on a board that repaints every ten
@@ -1426,12 +1435,12 @@
     sheet.className = 'sheetWrap';
     sheet.innerHTML =
       '<div class="sheet">' +
-      '<div class="sheetTitle">ยกเลิกออเดอร์ ' + esc(orderId) + '</div>' +
-      '<div class="sheetHint">เลือกเหตุผล — บันทึกลงประวัติออเดอร์</div>' +
+      '<div class="sheetTitle">Cancel order ' + esc(orderId) + '</div>' +
+      '<div class="sheetHint">Pick a reason — it is saved to the order history</div>' +
       CANCEL_REASONS.map(function (reason) {
-        return '<button class="sheetBtn" data-reason="' + escAttr(reason) + '">' + esc(reason) + '</button>';
+        return '<button class="sheetBtn" data-reason="' + escAttr(reason) + '">' + esc(CANCEL_REASON_LABELS[reason] || reason) + '</button>';
       }).join('') +
-      '<button class="sheetBtn cancel" data-close="1">ไม่ยกเลิก กลับไปก่อน</button>' +
+      '<button class="sheetBtn cancel" data-close="1">Go back, do not cancel</button>' +
       '</div>';
     sheet.addEventListener('click', function (e) {
       if (e.target === sheet || e.target.getAttribute('data-close')) { closeCancelSheet(); return; }
@@ -1439,17 +1448,17 @@
       if (!btn) return;
       var reason = btn.getAttribute('data-reason');
       sheet.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
-      btn.textContent = 'กำลังยกเลิก...';
+      btn.textContent = 'Cancelling...';
       var payload = creds();
       payload.orderId = orderId;
       payload.reason = reason;
       callApi('cancelOrderViaLiff', payload).then(function (r) {
         closeCancelSheet();
-        if (!r || !r.ok) { toast((r && (r.reason || r.error)) || 'ยกเลิกไม่สำเร็จ', true); return; }
-        toast('ยกเลิก ' + orderId + ' แล้ว (' + reason + ')');
+        if (!r || !r.ok) { toast((r && (r.reason || r.error)) || 'Could not cancel', true); return; }
+        toast('Cancelled ' + orderId + ' (' + (CANCEL_REASON_LABELS[reason] || reason) + ')');
         openMenus = {};
         forceRefresh();
-      }).catch(function () { closeCancelSheet(); toast('ยกเลิกไม่สำเร็จ', true); });
+      }).catch(function () { closeCancelSheet(); toast('Could not cancel', true); });
     });
     document.body.appendChild(sheet);
   }
@@ -1468,7 +1477,7 @@
   function showRules() {
     // Straight from SLA_BANDS_* in order-sla.js. The 15-minute rescue rule in
     // particular was invisible to the people it protects.
-    toast('เกณฑ์: รับออเดอร์ช้า 5 นาที = 100฿ · 10 นาที = 200฿ · เกิน 15 นาที = ไม่หักคุณ (นับเป็นออเดอร์ค้างของร้าน)');
+    toast('Rules: 5 min late to take an order = 100฿ · 10 min = 200฿ · over 15 min = no charge to you (it counts as the shop leaving it waiting)');
   }
 
   /** Ticks only the clock text, never the layout — re-rendering the list every
@@ -1526,7 +1535,7 @@
       // live, and the board is already polling. Only fetched while the tab
       // that shows them is actually open.
       if (currentTab === 'summary' && isSalesViewer()) loadSales(false);
-      document.getElementById('lastUpdated').textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH');
+      document.getElementById('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB');
     }).catch(function () {
       showOffline();
     }).finally(function () { refreshing = false; });
@@ -1560,12 +1569,12 @@
     if (!message && failedFetches < 2 && navigator.onLine !== false) return;
     if (allRows === null) {
       document.getElementById('list').innerHTML =
-        '<div class="empty">โหลดรายการไม่สำเร็จ<br><span style="font-size:14px">' + esc(message || 'เชื่อมต่อไม่ได้') + '</span></div>';
+        '<div class="empty">Could not load the list<br><span style="font-size:14px">' + esc(message || 'No connection') + '</span></div>';
     }
     var bar = document.getElementById('offlineBar');
     var since = serverNowMs ? Math.floor((performance.now() - serverNowLocal) / 60000) : 0;
     document.getElementById('offlineText').textContent = message ||
-      ('⚠ ไม่ได้เชื่อมต่อ · ข้อมูลเมื่อ ' + (since < 1 ? 'ไม่ถึง 1' : since) + ' นาทีที่แล้ว — ตัวเลขบนจออาจไม่ตรง');
+      ('⚠ Offline · data from ' + (since < 1 ? 'under 1' : since) + ' min ago — what you see may be out of date');
     bar.style.display = 'flex';
   }
   function clearOffline() {
@@ -1606,7 +1615,7 @@
       allRows = rows;
       lastPayload = JSON.stringify(rows);
       render();
-      document.getElementById('lastUpdated').textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH');
+      document.getElementById('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB');
     }).catch(function () {
       // The optimistic repaint above still stands — say nothing, the next poll retries.
     }).finally(function () { refreshing = false; });
@@ -1637,7 +1646,7 @@
     if (hidden) return;
     var bar = document.getElementById('learnBar');
     document.getElementById('learnText').innerHTML =
-      '💡 "รับออเดอร์" = บอกระบบว่าคุณจะไปเอาให้ · กดแล้วนาฬิกาแคชเชียร์หยุดทันที';
+      '💡 "Take order" tells the system you are going to get it · the clock stops the moment you tap';
     bar.style.display = 'flex';
   }
 
@@ -1672,11 +1681,11 @@
   }
 
   function doClaim(orderId) {
-    withButtonBusy('btn-' + orderId, 'กำลังรับ...', function () {
+    withButtonBusy('btn-' + orderId, 'Taking...', function () {
       return callApi('claimOrderViaLiff', { idToken: idToken, accessToken: accessToken, orderId: orderId }).then(function (r) {
-        if (!r.ok) { toast(r.reason || r.error || 'บันทึกไม่สำเร็จ ใบนี้ยังไม่มีใครรับ ลองกดอีกครั้ง', true); return; }
-        toast('รับออเดอร์ ' + orderId + ' แล้ว');
-        applyLocalStage(orderId, 1); // รอร้านรับ -> เตรียมอาหาร, on screen immediately
+        if (!r.ok) { toast(r.reason || r.error || 'Could not save — nobody has taken this one yet, tap again', true); return; }
+        toast('You took order ' + orderId);
+        applyLocalStage(orderId, 1); // waiting -> being made, on screen immediately
         markPending(orderId, 'pending');   // shown, not yet confirmed by the server
         forceRefresh().then(function () { markPending(orderId, ''); },
                             function () { markPending(orderId, 'failed'); });
@@ -1685,10 +1694,10 @@
   }
 
   function doNudge(orderId) {
-    withButtonBusy('nudge-' + orderId, 'กำลังเตือน...', function () {
+    withButtonBusy('nudge-' + orderId, 'Nudging...', function () {
       return callApi('nudgeOrderViaLiff', { idToken: idToken, accessToken: accessToken, orderId: orderId }).then(function (r) {
-        if (!r.ok) { toast(r.error || 'เตือนไม่สำเร็จ', true); return; }
-        toast('เตือนผู้จัดการร้านแล้ว');
+        if (!r.ok) { toast(r.error || 'Could not nudge', true); return; }
+        toast('The shop manager has been nudged');
       });
     });
   }
@@ -1792,18 +1801,18 @@
     var errEl = document.getElementById('err-' + orderId);
     var submitBtn = document.getElementById('submit-' + orderId);
     errEl.textContent = '';
-    if (!isKitchen && !amount) { errEl.textContent = '⚠ ใส่ยอดเงินที่จ่ายจริงตามบิล'; return; }
+    if (!isKitchen && !amount) { errEl.textContent = '⚠ Enter the amount paid'; return; }
     // One message per missing photo, naming it — the runner has to know which
     // one to go and take.
-    if (!isKitchen && !foodFiles.length) { errEl.textContent = '⚠ ยังไม่ได้ถ่ายรูปอาหารตอนวางส่ง'; return; }
+    if (!isKitchen && !foodFiles.length) { errEl.textContent = '⚠ No photo of the food yet'; return; }
     if (!files.length) {
       errEl.textContent = isKitchen
-        ? '⚠ ถ่ายรูปอาหาร 1 รูปก่อนกดยืนยัน'
-        : '⚠ ยังไม่ได้ถ่ายรูปบิล — ไม่มีบิลจะเคลียร์ยอดสิ้นเดือนไม่ได้';
+        ? '⚠ Take one photo of the food before you confirm'
+        : '⚠ No photo of the bill yet — the month cannot be settled without it';
       return;
     }
     submitBtn.disabled = true;
-    errEl.textContent = 'กำลังเตรียมรูป...';
+    errEl.textContent = 'Preparing photos...';
     shrinkAll(files.concat(foodFiles), function (allUrls) {
       // shrinkAll keeps the order it was given: bills first, then the single
       // handover photo appended above.
@@ -1817,7 +1826,7 @@
       var tooBig = dataUrls.filter(function (u) { return u && u.length > 3000000; });
       if (tooBig.length) {
         submitBtn.disabled = false;
-        errEl.textContent = '⚠ รูปใหญ่เกินไป ถ่ายใหม่ให้เห็นเฉพาะใบบิล ไม่ต้องติดโต๊ะ';
+        errEl.textContent = '⚠ Photo too big — retake it showing just the bill, not the table';
         return;
       }
       // 90 seconds of a static 'กำลังส่ง...' is why bills go missing: at about
@@ -1828,10 +1837,10 @@
       errEl.style.color = 'var(--ink-2)';
       var uploadTimer = setInterval(function () {
         var sec = Math.floor((Date.now() - startedAt) / 1000);
-        errEl.innerHTML = 'กำลังส่งบิล… ' + sec + ' วิ<br>' +
-          '<span style="color:var(--warn-ink);font-weight:600">ไวไฟโรงแรมช้า อาจใช้เวลาถึง 1 นาที · ปิดหน้านี้แล้วรูปจะหาย</span>';
+        errEl.innerHTML = 'Sending… ' + sec + ' sec<br>' +
+          '<span style="color:var(--warn-ink);font-weight:600">Hotel wifi is slow — this can take a minute. Close this page and the photo is lost.</span>';
       }, 1000);
-      errEl.textContent = 'กำลังส่งบิล… 0 วิ';
+      errEl.textContent = 'Sending… 0 sec';
       var payload = {
         idToken: idToken, accessToken: accessToken, liffSource: 'order', ticketId: orderId,
       };
@@ -1847,8 +1856,8 @@
         clearInterval(uploadTimer);
         errEl.style.color = '';
         submitBtn.disabled = false;
-        if (!r.ok) { errEl.textContent = r.error || 'ผิดพลาด'; return; }
-        toast('บันทึก ' + orderId + ' เรียบร้อย');
+        if (!r.ok) { errEl.textContent = r.error || 'Something went wrong'; return; }
+        toast('Saved ' + orderId);
         openForms = {};
         applyLocalStage(orderId, nextStage);
         forceRefresh();
@@ -1856,7 +1865,7 @@
         clearInterval(uploadTimer);
         errEl.style.color = '';
         submitBtn.disabled = false;
-        errEl.textContent = '⚠ ส่งบิลไม่สำเร็จ รูปยังอยู่ในเครื่อง กดบันทึกอีกครั้งได้เลย ไม่ต้องถ่ายใหม่';
+        errEl.textContent = '⚠ Could not send. The photo is still on your phone — tap Save again, no need to retake it.';
       });
     });
   }
@@ -1931,8 +1940,8 @@
       document.getElementById('tabMine').classList.remove('active');
       document.getElementById('tabAll').classList.add('active');
       var banner = document.getElementById('scopeBanner');
-      banner.innerHTML = '<span>📦 กำลังดูเฉพาะคำขอ ' + esc(REQUEST_GROUP) + '</span>' +
-        '<a href="' + esc(location.pathname) + '">ดูทั้งหมด</a>';
+      banner.innerHTML = '<span>📦 Showing one order group: ' + esc(REQUEST_GROUP) + '</span>' +
+        '<a href="' + esc(location.pathname) + '">Show all</a>';
       banner.style.display = 'flex';
     }
     render();
@@ -1946,7 +1955,7 @@
       // is no "view only" mode any more — buttons that can only ever fail just
       // teach staff the system is broken.
       authState = 'none';
-      document.getElementById('whoLine').textContent = 'ยังไม่ได้ยืนยันตัวตน';
+      document.getElementById('whoLine').textContent = 'Not signed in';
       render();
       return;
     }
@@ -1965,7 +1974,7 @@
       }
     }).catch(function () {});
     callApi('whoAmIViaLiff', { idToken: idToken, accessToken: accessToken }).then(function (whoami) {
-      if (!whoami || !whoami.userId) { document.getElementById('whoLine').textContent = 'ยืนยันตัวตนไม่สำเร็จ'; return; }
+      if (!whoami || !whoami.userId) { document.getElementById('whoLine').textContent = 'Could not confirm who you are'; return; }
       me = whoami;
       // `label` comes from the backend and already says the right thing for an
       // unrecognised user; the page was printing a bare name and role instead.
@@ -1985,13 +1994,13 @@
         selectTab('summary');
         return;
       }
-      render(); // re-filter "ต้องทำ" now that me.userId is known
+      render(); // re-filter "To do" now that me.userId is known
     });
   }).catch(function (err) {
     // The board is already on screen — a LIFF failure costs identity (and so
     // the action buttons), not the whole page.
     authState = 'none';
-    document.getElementById('whoLine').textContent = 'เชื่อมต่อไลน์ไม่สำเร็จ';
+    document.getElementById('whoLine').textContent = 'Could not connect to LINE';
     render();
     console.error(err);
   });
