@@ -231,8 +231,7 @@
     </div>
   </header>
   <div class="tabs">
-    <button id="tabMine" class="active">To do</button>
-    <button id="tabAll">All</button>
+    <button id="tabAll" class="active">Orders</button>
     <button id="tabSummary">สรุปเดือนนี้</button>
     <!-- Hidden until whoAmI resolves a manager/venue_manager role — 'staff'
          never sees this tab exist, same boundary the backend enforces. -->
@@ -241,6 +240,7 @@
   <div id="offlineBar"><span id="offlineText"></span><button onclick="forceRefresh()">Try again</button></div>
   <div id="scopeBanner" style="display:none"></div>
   <div id="learnBar"><span id="learnText"></span><button onclick="hideLearnBar()">Hide</button></div>
+  <div id="quotaBox" class="unknownBox" style="display:none"></div>
   <div id="unknownBox" class="unknownBox" style="display:none"></div>
   <div id="shopFilterBar"></div>
   <div id="list"></div>
@@ -330,8 +330,10 @@
   // "รอร้านรับ" leaves the shop that placed the order unsure whose move it is.
   // The server also sends r.stageLabel; this array is the fallback for a row
   // fetched before that field existed.
-  var STAGE_LABELS = ['Waiting to be taken', 'Being made', 'On the way', 'Delivered'];
-  var STAGE_LABELS_SELL = ['Waiting for the other shop', 'Being prepared', 'On the way', 'Delivered'];
+  // Three since the claim step went (2026-09-11): a keyed order is the
+  // kitchen's straight away, so nothing waits to be taken any more.
+  var STAGE_LABELS = ['Being made', 'On the way', 'Delivered'];
+  var STAGE_LABELS_SELL = ['Being prepared', 'On the way', 'Delivered'];
   function stageLabelOf(r) {
     if (r && r.stageLabel) return String(r.stageLabel).replace(/^[^\u0E00-\u0E7Fa-zA-Z]+/, '');
     return (r && r.isSell ? STAGE_LABELS_SELL : STAGE_LABELS)[(r && r.stage) || 0];
@@ -346,7 +348,7 @@
   var authState = 'pending';
   function creds() { return { idToken: idToken, accessToken: accessToken }; }
   var me = null;
-  var currentTab = 'mine';
+  var currentTab = 'all';
   // Appeals against SLA fines (Phase 4 E1). manager-only: a venue_manager may
   // read the fine leaderboard for their shop but may not waive a fine on it,
   // and the backend enforces that independently (requireFullManager_).
@@ -447,14 +449,15 @@
   var clockTimer = null;
   var openMenus = {};
 
-  // ---- SLA clocks -------------------------------------------------------
-  // These thresholds are the fine schedule in order-sla.js (SLA_BANDS_CASHIER_,
-  // SLA_BANDS_KITCHEN_, SLA_CASHIER_RESCUE_MINUTES_). The screen has been
-  // showing none of it: the same button costs 0฿ on one card and 200฿ on the
-  // next, and nothing on screen said which. That is not a polish problem, it
-  // is a fairness problem.
-  var CASHIER_100 = 300, CASHIER_200 = 480, CASHIER_RESCUE = 900; // seconds — 5 / 8 / 15 minutes
-  var KITCHEN_LIMIT = 1020; // 17 minutes — just under the 18-minute kitchen budget
+  // ---- SLA clock --------------------------------------------------------
+  // The threshold is the fine schedule in order-sla.js (SLA_BANDS_KITCHEN_).
+  // The screen used to show none of it: the same button costs 0฿ on one card
+  // and 200฿ on the next, and nothing on screen said which. That is not a
+  // polish problem, it is a fairness problem.
+  //
+  // The cashier thresholds that used to sit here went with the claim step on
+  // 2026-09-11 — there is one window now, and it opens when the order does.
+  var KITCHEN_LIMIT = 1320; // 22 minutes — just under the 23-minute kitchen budget
 
   /** Seconds since a "yyyy-MM-dd HH:mm:ss" stamp, measured against the SERVER
    *  clock we were handed, not the phone's — an old handset is routinely
@@ -489,44 +492,25 @@
    * exists precisely so nobody walks past an order everyone else is avoiding,
    * and a rule nobody is told about changes nobody's behaviour.
    */
-  function cashierClock(r) {
-    var sec = secondsSince(r.orderedAt);
-    if (sec >= CASHIER_RESCUE) {
-      return { tier: 'free', group: 2, sec: sec,
-        text: '🅿 waiting ' + humanMins(sec) + ' · you are not charged for this one' };
-    }
-    if (sec >= CASHIER_200) {
-      return { tier: 'hot', group: 1, sec: sec,
-        text: '⏱ ' + mmss(sec) + '  at 200฿ · in ' + mmss(CASHIER_RESCUE - sec) + ' it becomes a left-waiting order (no charge to you)' };
-    }
-    if (sec >= CASHIER_100) {
-      return { tier: 'hot', group: 1, sec: sec,
-        text: '⏱ ' + mmss(sec) + '  past 100฿ · ' + mmss(CASHIER_200 - sec) + ' before it becomes 200฿' };
-    }
-    if (sec >= 180) {
-      var left = CASHIER_100 - sec;
-      return { tier: 'warn', group: 1, sec: sec,
-        // Seconds only inside the last minute; eight cards all ticking their
-        // seconds at once is unreadable and just makes the screen feel frantic.
-        text: '⏱ ' + mmss(sec) + '  ' + (left < 60 ? left + ' sec' : mmss(left)) + ' before it reaches 100฿' };
-    }
-    return { tier: 'calm', group: 4, sec: sec, text: '⏱ ' + mmss(sec) + ' · still in time' };
-  }
+  // cashierClock lived here: a countdown to the 100฿/200฿ fine for taking too
+  // long to CLAIM an order. There is no claim any more, so there is no such
+  // fine and nothing to count down to — the kitchen window below is the only
+  // clock on a card now, and it starts when the order arrives.
 
   /** The kitchen window is charged to the kitchen lead, never to the runner who
    *  reports it (order-sla.js). Saying so out loud is the whole point: fear of
    *  being charged is why people hesitate on this button too. */
   function kitchenClock(r) {
-    var sec = secondsSince(r.keyedAt);
+    // From the order, not from a claim: `keyedAt` is only still sent for rows
+    // written before 2026-09-11.
+    var sec = secondsSince(r.orderedAt);
     if (sec >= KITCHEN_LIMIT) {
       return { tier: 'free', sec: sec, text: '🍳 in the kitchen ' + humanMins(sec) + ' · past the kitchen target — tap it, you are not charged' };
     }
     return { tier: 'calm', sec: sec, text: '🍳 in the kitchen ' + humanMins(sec) };
   }
 
-  function clockFor(r) {
-    return r.stage === 0 ? cashierClock(r) : kitchenClock(r);
-  }
+  function clockFor(r) { return kitchenClock(r); }
 
   /**
    * The promise clock: 30 minutes for a hotel order, 45 for shop-to-shop,
@@ -556,7 +540,7 @@
   /** Which section a row belongs in. Ordering is by what it costs to leave the
    *  order alone, not by when it arrived. */
   function groupOf(r) {
-    if (r.stage === 0) return cashierClock(r).group;
+    if (r.stage === 0) return kitchenClock(r).group || 1;
     return 3; // claimed and in progress
   }
 
@@ -678,6 +662,24 @@
     box.style.display = 'block';
   }
 
+  /**
+   * The month's LINE push quota is gone, so no card will arrive in the group.
+   *
+   * This cannot be announced in LINE — the announcement would itself be a
+   * push. The board is the one surface still working, so it says it here, and
+   * says the part that matters: the work still goes through, from this screen.
+   */
+  function renderQuotaWarning() {
+    var box = document.getElementById('quotaBox');
+    if (!box) return;
+    if (!me || !me.pushQuotaOut) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.innerHTML = '<b>⚠ No cards in the group this month</b><br>' +
+      'LINE\'s monthly message quota is used up, so the bot cannot post cards. ' +
+      'Everything still works from this board — take orders, mark food ready and deliver here as usual.' +
+      '<div style="margin-top:6px;color:#7c2d12">โควตาข้อความ LINE เดือนนี้หมด การ์ดจะไม่เข้ากลุ่ม — ทำงานผ่านหน้านี้ได้ตามปกติ</div>';
+    box.style.display = 'block';
+  }
+
   function copyMyUserId() {
     var text = me && me.userId ? me.userId : '';
     if (!text) return;
@@ -748,26 +750,23 @@
   }
 
   function actionSectionHtml(row, mini) {
-    if (row.stage === 3) return '';
-    if (row.stage === 0) {
-      return '<button class="actionBtn" id="btn-' + row.orderId + '" onclick="doClaim(\'' + row.orderId + '\')">Take this order</button>';
-    }
+    if (row.stage === 2) return '';
     if (mini) {
-      // Claimed work is a compact row: the runner already knows what it is.
-      var label = (row.stage === 1 && row.is24) ? 'Food ready'
-        : (row.stage === 1) ? 'Delivered'
+      // A compact row: whoever is working it already knows what it is.
+      var label = (row.stage === 0 && row.is24) ? 'Food ready'
+        : (row.stage === 0) ? 'Delivered'
         : 'Deliver';
       // Every step opens a form now: the bare 24BLVD close was what let an
       // order finish with no bill and no amount, and the backend refuses it.
       return '<button class="miniBtn" id="btn-' + row.orderId + '" onclick="toggleForm(\'' + row.orderId + '\')">' + label + '</button>';
     }
-    if (row.stage === 1 && row.is24) {
+    if (row.stage === 0 && row.is24) {
       return miniFormHtml(row.orderId, '🍳 Food ready (kitchen taps this)', 'submitFood', 'kitchen');
     }
-    if (row.stage === 1 && !row.is24) {
+    if (row.stage === 0 && !row.is24) {
       return miniFormHtml(row.orderId, '✅ Mark delivered + bill', 'submitDeliverForm', 'handover');
     }
-    if (row.stage === 2 && row.is24) {
+    if (row.stage === 1 && row.is24) {
       return miniFormHtml(row.orderId, '✅ Mark delivered + bill', 'submitDeliverForm', 'handover');
     }
     return '';
@@ -1287,7 +1286,7 @@
         // 🔔 fires a real, billed LINE push and wakes a manager at 01:00. It used
         // to sit full-width 8px under the main button — one slip with a wet
         // thumb. Behind ⋯ it always takes two deliberate taps.
-        (r.stage < 3 ? '<button id="nudge-' + r.orderId + '" onclick="doNudge(\'' + r.orderId + '\')">🔔 Nudge the shop manager</button>' : '') +
+        (r.stage < 2 ? '<button id="nudge-' + r.orderId + '" onclick="doNudge(\'' + r.orderId + '\')">🔔 Nudge the shop manager</button>' : '') +
         // One line per photo, each saying what it shows. There are three kinds
         // now and two of them are the same plate — "ดูรูป (3)" would be
         // useless for the one job they exist for, telling whether a problem
@@ -1301,7 +1300,7 @@
         // Destructive, so it sits at the bottom of a menu that already takes
         // two deliberate taps to open, and asks for a reason before it does
         // anything (the backend refuses a cancellation without one).
-        (r.stage < 3 && !r.isCancelled
+        (r.stage < 2 && !r.isCancelled
           ? '<button style="color:#b91c1c;font-weight:700" onclick="askCancel(\'' + r.orderId + '\')">🚫 Cancel order</button>'
           : '') +
       '</div>' +
@@ -1317,8 +1316,9 @@
       '<div class="sub">' + esc(r.seller) + '</div>' +
       '<div class="items" style="margin-top:4px">' + esc(r.items.replace(/\n/g, ', ')) + '</div>' +
       '</div>' + actionSectionHtml(r, true) + '</div>' +
-      // stage 1 needs a bill + amount before it can advance; stage 2 is a bare press.
-      (r.stage === 1 ? formBodyHtml(r.orderId, r.is24 ? 'submitFood' : 'submitDeliverForm') : '') +
+      // The first stage needs a photo (24BLVD) or a bill + amount (everyone
+      // else) before it can advance.
+      (r.stage === 0 ? formBodyHtml(r.orderId, r.is24 ? 'submitFood' : 'submitDeliverForm', r.is24 ? 'kitchen' : 'handover') : '') +
       '</div>';
   }
 
@@ -1680,18 +1680,9 @@
     if (state) card.classList.add(state);
   }
 
-  function doClaim(orderId) {
-    withButtonBusy('btn-' + orderId, 'Taking...', function () {
-      return callApi('claimOrderViaLiff', { idToken: idToken, accessToken: accessToken, orderId: orderId }).then(function (r) {
-        if (!r.ok) { toast(r.reason || r.error || 'Could not save — nobody has taken this one yet, tap again', true); return; }
-        toast('You took order ' + orderId);
-        applyLocalStage(orderId, 1); // waiting -> being made, on screen immediately
-        markPending(orderId, 'pending');   // shown, not yet confirmed by the server
-        forceRefresh().then(function () { markPending(orderId, ''); },
-                            function () { markPending(orderId, 'failed'); });
-      });
-    });
-  }
+  // doClaim() lived here. There is no claim step any more (2026-09-11): an
+  // order is the kitchen's the moment it is keyed, so the first button on a
+  // card is the kitchen's, not a runner's.
 
   function doNudge(orderId) {
     withButtonBusy('nudge-' + orderId, 'Nudging...', function () {
@@ -1885,7 +1876,7 @@
 
   function selectTab(tab) {
     currentTab = tab;
-    ['Mine', 'All', 'Summary', 'Manager'].forEach(function (name) {
+    ['All', 'Summary', 'Manager'].forEach(function (name) {
       document.getElementById('tab' + name).classList.toggle('active', tab === name.toLowerCase());
     });
     // The summary is a separate, heavier query — fetched the first time the
@@ -1894,7 +1885,6 @@
     if (tab === 'summary' && !sales) loadSales(true);
     render();
   }
-  document.getElementById('tabMine').addEventListener('click', function () { selectTab('mine'); });
   document.getElementById('tabAll').addEventListener('click', function () { selectTab('all'); });
   document.getElementById('tabSummary').addEventListener('click', function () {
     // Both caches cleared, not just `summary`: leaving `sales` populated meant
@@ -1934,10 +1924,7 @@
     document.getElementById('boot').style.display = 'none';
     document.getElementById('app').style.display = 'block';
     if (REQUEST_GROUP) {
-      // Scoped to one request: "ต้องทำ" would hide the shops already handled,
-      // which is the opposite of what someone following their own order wants.
       currentTab = 'all';
-      document.getElementById('tabMine').classList.remove('active');
       document.getElementById('tabAll').classList.add('active');
       var banner = document.getElementById('scopeBanner');
       banner.innerHTML = '<span>📦 Showing one order group: ' + esc(REQUEST_GROUP) + '</span>' +
@@ -1980,6 +1967,7 @@
       // unrecognised user; the page was printing a bare name and role instead.
       document.getElementById('whoLine').textContent = me.label || (me.actorName + ' (' + me.role + ')');
       renderUnknownIdentity();
+      renderQuotaWarning();
       // The backend re-checks this on every manager call regardless — this
       // only decides whether the tab is worth showing at all.
       if (me.role === 'manager' || me.role === 'venue_manager') {
