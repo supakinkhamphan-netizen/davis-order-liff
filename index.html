@@ -363,14 +363,29 @@
   var zoneFilter = '';
   var lastSalesAt = '';
 
-  /** A shop's selling zone, from whatever data the current tab has. */
+  /**
+   * A shop's selling zone, from the directory the backend sends unfiltered.
+   *
+   * This used to read sales.byShop — which now only contains the shops being
+   * filtered TO, so the chips would disappear the moment one was picked and
+   * there would be no way left to clear the filter.
+   */
   function zoneOfShop(name) {
-    if (sales && sales.byShop) {
-      for (var i = 0; i < sales.byShop.length; i++) {
-        if (sales.byShop[i].shop === name) return sales.byShop[i].zone || '';
-      }
-    }
+    if (sales && sales.shopZones && sales.shopZones[name]) return sales.shopZones[name];
     return '';
+  }
+  /** Every shop the directory knows, so the chip list does not shrink as filters are applied. */
+  function allKnownShops() {
+    if (!sales || !sales.shopZones) return [];
+    return Object.keys(sales.shopZones);
+  }
+  /** What the page is asking the backend to total: the picked shops, or every shop in the picked zone. */
+  function venuesForQuery() {
+    if (shopFilters.length) return shopFilters.slice();
+    if (zoneFilter) {
+      return allKnownShops().filter(function (s) { return sales.shopZones[s] === zoneFilter; });
+    }
+    return [];
   }
   function zoneOfShopFromRows(rows) {
     var map = {};
@@ -613,18 +628,36 @@
     bar.style.display = 'none';
     bar.innerHTML = '';
   }
+  /**
+   * Any change to what is being looked at re-asks the backend for the totals.
+   *
+   * Without this the figures simply stayed as they were while the heading
+   * changed to name the new filter — the failure the owner caught: correct
+   * words over the previous selection's numbers.
+   */
+  function filtersChanged() {
+    if (currentTab === 'summary') {
+      sales = null;          // show the loading state rather than stale money
+      lastSalesPayload = '';
+      renderSummary();
+      loadSales(true);
+    } else {
+      render();
+    }
+  }
+
   document.getElementById('shopFilterBar').addEventListener('click', function (e) {
     var zoneBtn = e.target.closest('button[data-zone]');
     if (zoneBtn) {
       zoneFilter = zoneBtn.getAttribute('data-zone') || '';
       shopFilters = []; // a new zone starts with all of its shops
-      if (currentTab === 'summary') renderSummary(); else render();
+      filtersChanged();
       return;
     }
     var btn = e.target.closest('button[data-shop]');
     if (!btn) return;
     toggleShop(btn.getAttribute('data-shop') || '');
-    if (currentTab === 'summary') renderSummary(); else render();
+    filtersChanged();
   });
 
   /**
@@ -830,9 +863,10 @@
    */
   function shopBreakdownHtml() {
     if (!sales || !sales.byShop || !sales.byShop.length) return '';
-    // Rows obey the zone chip as well, so the panel and the chips can never
-    // show a different set of shops.
-    var shown = sales.byShop.filter(function (sh) { return !zoneFilter || sh.zone === zoneFilter; });
+    // No filtering here any more: the backend totalled exactly these shops
+    // (loadSales sends them), so byShop already IS the filtered set. Filtering
+    // it again would be a second place for the two answers to disagree.
+    var shown = sales.byShop;
     if (!shown.length) return '';
     var peak = shown[0].amount || 0;
     var total = shown.reduce(function (a, sh) { return a + sh.amount; }, 0);
@@ -950,7 +984,10 @@
     if (!summary) { hideShopFilterBar(); list.innerHTML = salesHtml + skeletonCards(); return; }
     // Zones for these rows come from the sales panel's byShop, which carries the
     // zone the backend stamped on it — one definition, not a copy kept here.
-    renderShopFilterBar(distinctShops(summary.rows), zoneOfShop);
+    // Chips come from the directory, not from the rows that survived the last
+    // filter — a chip list that shrinks as you filter takes away the control
+    // that clears it.
+    renderShopFilterBar(allKnownShops().length ? allKnownShops() : distinctShops(summary.rows), zoneOfShop);
     var rows = summary.rows.filter(function (r) { return shopMatches(r.seller) && zoneOfShop(r.seller) === (zoneFilter || zoneOfShop(r.seller)); });
     if (rows.length === 0) {
       list.innerHTML = salesHtml + ((shopFilters.length || zoneFilter)
@@ -1676,6 +1713,11 @@
     salesLoading = true;
     var payload = creds();
     payload.range = salesRange;
+    // The totals are computed for exactly what the page says it is showing.
+    // Filtering the response here instead is what produced a headline figure
+    // for all ten orders under the words "กำลังดู: Fairway" (Phase 14 §1).
+    var venues = venuesForQuery();
+    if (venues.length) payload.shops = venues;
     if (salesRange === 'custom') { payload.from = salesFrom; payload.to = salesTo; }
     callApi('orderSalesSummaryViaLiff', payload).then(function (s) {
       if (!s || s.error) { if (force) toast(s && s.error ? s.error : 'โหลดยอดขายไม่สำเร็จ', true); return; }
@@ -1716,7 +1758,7 @@
     var shopRow = e.target.closest('[data-shop-row]');
     if (shopRow) {
       toggleShop(shopRow.getAttribute('data-shop-row') || '');
-      if (currentTab === 'summary') renderSummary(); else render();
+      filtersChanged();
       return;
     }
     var chip = e.target.closest('.rangeChip');
