@@ -541,7 +541,7 @@
    *  order alone, not by when it arrived. */
   function groupOf(r) {
     if (r.stage === 0) return kitchenClock(r).group || 1;
-    return 3; // claimed and in progress
+    return 3; // past the kitchen — being delivered, or already done
   }
 
   // callApi() and firstBoard are declared in the block above the SDK tag.
@@ -1982,7 +1982,7 @@
         selectTab('summary');
         return;
       }
-      render(); // re-filter "To do" now that me.userId is known
+      render(); // redraw now that me.userId is known — the action buttons need it
     });
   }).catch(function (err) {
     // The board is already on screen — a LIFF failure costs identity (and so
