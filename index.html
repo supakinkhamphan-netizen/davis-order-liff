@@ -146,7 +146,17 @@
   .shopChipRow { display:flex; gap:8px; overflow-x:auto; padding:0 12px 2px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
   .shopChipRow::-webkit-scrollbar { display:none; }
   .shopChip { flex:0 0 auto; border:1px solid var(--line); background:var(--card); color:var(--ink-2); font-family:inherit; font-size:14px; font-weight:600; padding:8px 14px; border-radius:999px; white-space:nowrap; }
-  .shopChip.active { background:var(--ink); color:var(--card); border-color:var(--ink); }
+  /* Multi-select needs a much louder "on": with several chips selected at once,
+     a one-shade difference makes the set of picks unreadable at a glance. */
+  .shopChip.active { background:var(--ink); color:var(--card); border-color:var(--ink); font-weight:800; box-shadow:0 0 0 2px var(--bg), 0 0 0 4px var(--ink); }
+  .shopChipRow.zoneRow { margin-bottom:8px; }
+  .zoneChip { text-transform:none; letter-spacing:0; }
+  .zoneChip.active { box-shadow:none; }
+  .liveDot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#16a34a; margin-right:6px; vertical-align:middle; animation:livePulse 2s ease-in-out infinite; }
+  @keyframes livePulse { 0%,100% { opacity:1 } 50% { opacity:.25 } }
+  .unknownBox { max-width:520px; margin:10px auto 0; padding:14px 16px; background:#fef3c7; color:#92400e; border-radius:12px; font-size:14px; line-height:1.7; }
+  .unknownBox code { display:block; margin:8px 0; padding:10px; background:#fff; color:#111; border-radius:8px; font-size:13px; word-break:break-all; }
+  .unknownBox button { width:100%; min-height:44px; border:none; border-radius:8px; background:#92400e; color:#fff; font-family:inherit; font-size:14px; font-weight:700; }
   /* Sales filter + stat strip (สรุปเดือนนี้ tab, managers only). The stat
      grid is 2x2 rather than a 4-across row: four numbers side by side on a
      360px phone shrink to a size nobody reads at arm's length in a dark shop. */
@@ -231,6 +241,7 @@
   <div id="offlineBar"><span id="offlineText"></span><button onclick="forceRefresh()">ลองใหม่</button></div>
   <div id="scopeBanner" style="display:none"></div>
   <div id="learnBar"><span id="learnText"></span><button onclick="hideLearnBar()">ซ่อน</button></div>
+  <div id="unknownBox" class="unknownBox" style="display:none"></div>
   <div id="shopFilterBar"></div>
   <div id="list"></div>
   <p id="lastUpdated"></p>
@@ -343,7 +354,50 @@
   var appealBusy = '';
   // '' = every shop. Persists across tabs/polls on purpose: someone who picks
   // "ร้าน A" on "ทั้งหมด" almost always wants that same shop on "สรุปเดือนนี้" too.
-  var shopFilter = '';
+  // A SET of shops, not one shop. The owner asked to watch two or three at a
+  // time; the single-string version dropped the previous pick on every tap.
+  // Still exactly one filter mechanism — Phase 3 §E2 — everything that filters
+  // by shop reads this array, and the rows in the sales panel toggle it too.
+  var shopFilters = [];
+  // One zone at a time, and it narrows which shop chips exist (§3.2).
+  var zoneFilter = '';
+  var lastSalesAt = '';
+
+  /** A shop's selling zone, from whatever data the current tab has. */
+  function zoneOfShop(name) {
+    if (sales && sales.byShop) {
+      for (var i = 0; i < sales.byShop.length; i++) {
+        if (sales.byShop[i].shop === name) return sales.byShop[i].zone || '';
+      }
+    }
+    return '';
+  }
+  function zoneOfShopFromRows(rows) {
+    var map = {};
+    (rows || []).forEach(function (r) { if (r.seller && r.sellerZone) map[r.seller] = r.sellerZone; });
+    return function (name) { return map[name] || ''; };
+  }
+
+  function shopSelected(name) { return shopFilters.indexOf(name) >= 0; }
+  function toggleShop(name) {
+    if (!name) { shopFilters = []; return; }
+    var i = shopFilters.indexOf(name);
+    if (i >= 0) shopFilters.splice(i, 1); else shopFilters.push(name);
+  }
+  /** No selection means everything — the same rule the single filter had for ''. */
+  function shopMatches(seller) { return !shopFilters.length || shopFilters.indexOf(seller) >= 0; }
+  function zoneMatches(row) { return !zoneFilter || row.sellerZone === zoneFilter; }
+  function shopFilterLabel() {
+    if (!shopFilters.length) return '';
+    if (shopFilters.length <= 2) return shopFilters.join(' + ');
+    return shopFilters.length + ' ร้าน';
+  }
+  /** Shops that belong to the picked zone, from the zone the backend stamped on each row. */
+  function shopsInZone(shops, zoneOf) {
+    if (!zoneFilter) return shops;
+    return shops.filter(function (s) { return zoneOf(s) === zoneFilter; });
+  }
+
   var allRows = null; // null = never loaded yet (shows skeleton, not "empty")
   var summary = null; // month-to-date totals, loaded lazily when the tab is opened
   // Sales figures for the picked range (managers only). `sales` is null until
@@ -515,16 +569,44 @@
    * simply doesn't get a chip. With 0 or 1 shop there is nothing to filter, so
    * the whole bar disappears rather than sit there doing nothing.
    */
-  function renderShopFilterBar(shops) {
+  function renderShopFilterBar(shops, zoneOf) {
     var bar = document.getElementById('shopFilterBar');
-    if (!shops || shops.length < 2) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
-    bar.innerHTML = '<div class="shopChipRow">' +
-      '<button class="shopChip' + (shopFilter === '' ? ' active' : '') + '" data-shop="">ทุกร้าน</button>' +
-      shops.map(function (s) {
-        return '<button class="shopChip' + (shopFilter === s ? ' active' : '') + '" data-shop="' + escAttr(s) + '">' + esc(s) + '</button>';
-      }).join('') +
-      '</div>';
-    bar.style.display = 'block';
+    zoneOf = zoneOf || function () { return ''; };
+    var zones = [];
+    (shops || []).forEach(function (s) {
+      var z = zoneOf(s);
+      if (z && zones.indexOf(z) < 0) zones.push(z);
+    });
+    // Picking a zone narrows the shop chips to that zone — chips that can only
+    // ever return zero are worse than no chips (§3.2).
+    var visible = shopsInZone(shops || [], zoneOf);
+    // Drop selections that the current zone hides, or the counts underneath
+    // would include shops with no chip left to unselect them with.
+    shopFilters = shopFilters.filter(function (n) { return visible.indexOf(n) >= 0; });
+
+    if ((!shops || shops.length < 2) && zones.length < 2) {
+      bar.style.display = 'none'; bar.innerHTML = ''; return;
+    }
+    var html = '';
+    if (zones.length > 1) {
+      html += '<div class="shopChipRow zoneRow">' +
+        '<button class="shopChip zoneChip' + (zoneFilter === '' ? ' active' : '') + '" data-zone="">ทุกโซน</button>' +
+        zones.map(function (z) {
+          return '<button class="shopChip zoneChip' + (zoneFilter === z ? ' active' : '') + '" data-zone="' + escAttr(z) + '">' + esc(z) + '</button>';
+        }).join('') +
+        '</div>';
+    }
+    if (visible.length >= 2) {
+      html += '<div class="shopChipRow">' +
+        '<button class="shopChip' + (shopFilters.length === 0 ? ' active' : '') + '" data-shop="">ทุกร้าน</button>' +
+        visible.map(function (s) {
+          return '<button class="shopChip' + (shopSelected(s) ? ' active' : '') + '" data-shop="' + escAttr(s) + '">' +
+            (shopSelected(s) ? '✓ ' : '') + esc(s) + '</button>';
+        }).join('') +
+        '</div>';
+    }
+    bar.innerHTML = html;
+    bar.style.display = html ? 'block' : 'none';
   }
   function hideShopFilterBar() {
     var bar = document.getElementById('shopFilterBar');
@@ -532,11 +614,66 @@
     bar.innerHTML = '';
   }
   document.getElementById('shopFilterBar').addEventListener('click', function (e) {
+    var zoneBtn = e.target.closest('button[data-zone]');
+    if (zoneBtn) {
+      zoneFilter = zoneBtn.getAttribute('data-zone') || '';
+      shopFilters = []; // a new zone starts with all of its shops
+      if (currentTab === 'summary') renderSummary(); else render();
+      return;
+    }
     var btn = e.target.closest('button[data-shop]');
     if (!btn) return;
-    shopFilter = btn.getAttribute('data-shop') || '';
+    toggleShop(btn.getAttribute('data-shop') || '');
     if (currentTab === 'summary') renderSummary(); else render();
   });
+
+  /**
+   * When the system does not recognise someone, show the id it actually sees.
+   *
+   * Without this the only symptom is a missing sales panel and a role that
+   * reads "staff" — which sent the owner hunting for half an hour on
+   * 2026-09-11. The id is the one thing an admin needs to paste into
+   * Staff_Registry, and whoAmIViaLiff has always returned it. (§4)
+   */
+  function renderUnknownIdentity() {
+    var box = document.getElementById('unknownBox');
+    if (!box) return;
+    if (!me || me.known !== false) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.innerHTML = '<b>ระบบยังไม่รู้จักคุณ</b><br>ให้ผู้ดูแลเพิ่ม ID นี้ในแท็บ <b>Staff_Registry</b> แล้วเปิดหน้านี้ใหม่' +
+      '<code id="myUserId">' + esc(me.userId) + '</code>' +
+      '<button onclick="copyMyUserId()">📋 ก๊อป ID</button>';
+    box.style.display = 'block';
+  }
+
+  function copyMyUserId() {
+    var text = me && me.userId ? me.userId : '';
+    if (!text) return;
+    // The LINE webview blocks the async clipboard API often enough that a
+    // silent failure is the norm; the textarea fallback is what actually works.
+    var done = function () { toast('ก๊อป ID แล้ว'); };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { legacyCopy(text, done); });
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    legacyCopy(text, done);
+  }
+  function legacyCopy(text, done) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      done();
+    } catch (e) {
+      toast('ก๊อปไม่สำเร็จ — กดค้างที่ ID เพื่อคัดลอกเอง', true);
+    }
+  }
 
   function toast(msg, isErr) {
     var el = document.getElementById('toast');
@@ -670,7 +807,11 @@
   // window, the other starts on Monday. They used to be the same thing, which
   // is why last week could never be compared with this one. (F1/F4)
   var RANGE_CHIPS = [
-    { key: 'today', label: 'วันนี้' },
+    // "วันนี้" already meant the CURRENT trading round, refreshed on the same
+    // 10-second poll the board runs on — the owner asked for "เรียลไทม์" and
+    // this was it, wearing a label that made it sound like yesterday's report.
+    // Same range key, same single poll; only the words and the timestamp are new.
+    { key: 'today', label: 'สดตอนนี้' },
     { key: '7d', label: '7 วัน' },
     { key: 'week', label: 'สัปดาห์นี้' },
     { key: 'lastweek', label: 'สัปดาห์ที่แล้ว' },
@@ -683,27 +824,33 @@
 
   /**
    * E2 — every shop, not just the five the LINE card has room for, with a bar
-   * against the top seller. Tapping a shop drives the SAME shopFilter the chip
-   * bar uses; a second filtering mechanism here would be one more thing that
-   * can disagree with the list underneath it.
+   * against the top seller. Tapping a shop toggles it in the SAME shopFilters
+   * set the chip bar uses; a second filtering mechanism here would be one more
+   * thing that can disagree with the list underneath it.
    */
   function shopBreakdownHtml() {
     if (!sales || !sales.byShop || !sales.byShop.length) return '';
-    var peak = sales.byShop[0].amount || 0;
-    var total = sales.totalSales || 0;
+    // Rows obey the zone chip as well, so the panel and the chips can never
+    // show a different set of shops.
+    var shown = sales.byShop.filter(function (sh) { return !zoneFilter || sh.zone === zoneFilter; });
+    if (!shown.length) return '';
+    var peak = shown[0].amount || 0;
+    var total = shown.reduce(function (a, sh) { return a + sh.amount; }, 0);
+    var picked = shopFilters.length;
     return '<div style="margin-top:16px"><div class="k" style="font-size:12px;color:var(--ink-2);font-weight:600">' +
-      'แยกตามร้าน <span style="font-weight:500">· กดที่ร้านเพื่อดูเฉพาะร้านนั้น</span></div>' +
-      sales.byShop.map(function (sh) {
+      'แยกตามร้าน <span style="font-weight:500">· กดเพื่อเลือก เลือกได้หลายร้าน' +
+      (picked ? ' · เลือกอยู่ ' + picked + ' ร้าน' : '') + '</span></div>' +
+      shown.map(function (sh) {
         var pct = total > 0 ? Math.round((sh.amount / total) * 100) : 0;
         var width = peak > 0 ? Math.max(2, Math.round((sh.amount / peak) * 100)) : 0;
-        return '<button class="shopRow' + (shopFilter === sh.shop ? ' picked' : '') + '" data-shop-row="' + escAttr(sh.shop) + '">' +
-          '<span class="shopRowTop"><span>' + esc(sh.shop) +
+        return '<button class="shopRow' + (shopSelected(sh.shop) ? ' picked' : '') + '" data-shop-row="' + escAttr(sh.shop) + '">' +
+          '<span class="shopRowTop"><span>' + (shopSelected(sh.shop) ? '✓ ' : '') + esc(sh.shop) +
             ' <span style="color:var(--ink-2)">(' + sh.count + ' · ' + pct + '%)</span></span>' +
             '<b>' + baht(sh.amount) + '</b></span>' +
           '<span class="shopBarTrack"><span class="shopBarFill" style="width:' + width + '%"></span></span>' +
           '</button>';
       }).join('') +
-      (shopFilter
+      (picked
         ? '<button class="shopRow" data-shop-row="" style="color:var(--ink-2);font-size:13px;font-weight:600">✕ ล้างตัวกรอง (ดูทุกร้าน)</button>'
         : '') +
       '</div>';
@@ -783,8 +930,17 @@
       ? '<div style="font-size:12px;color:var(--ink-2);margin-top:2px">รอบขาย ' + esc(sales.range.from) +
         (sales.range.from === sales.range.to ? '' : ' – ' + esc(sales.range.to)) + ' (10:00 – 02:00)</div>'
       : '';
+    // Only the live range gets the pulsing dot: on "เดือนนี้" a live indicator
+    // would be true and meaningless.
+    var liveNote = (salesRange === 'today' && lastSalesAt)
+      ? '<div style="font-size:12px;color:var(--ink-2);margin-top:2px"><span class="liveDot"></span>อัปเดตล่าสุด ' + esc(lastSalesAt) + ' · รีเฟรชเองทุก 10 วินาที</div>'
+      : '';
+    var scopeNote = (shopFilters.length || zoneFilter)
+      ? '<div style="font-size:12px;color:var(--ink-2);margin-top:2px">กำลังดู: <b>' + esc(shopFilterLabel() || zoneFilter) + '</b></div>'
+      : '';
     return '<div class="card" id="salesPanel"><div class="id">📊 ยอดขาย' +
-      (sales && sales.isScoped ? ' · เฉพาะร้านของคุณ' : '') + '</div>' + roundNote + chips + stats + '</div>';
+      (sales && sales.isScoped ? ' · เฉพาะร้านของคุณ' : '') + '</div>' +
+      roundNote + liveNote + scopeNote + chips + stats + '</div>';
   }
 
   function renderSummary() {
@@ -792,23 +948,27 @@
     if (authState === 'none') { hideShopFilterBar(); list.innerHTML = noAuthHtml(); return; }
     var salesHtml = isSalesViewer() ? salesPanelHtml() : '';
     if (!summary) { hideShopFilterBar(); list.innerHTML = salesHtml + skeletonCards(); return; }
-    renderShopFilterBar(distinctShops(summary.rows));
-    var rows = shopFilter ? summary.rows.filter(function (r) { return r.seller === shopFilter; }) : summary.rows;
+    // Zones for these rows come from the sales panel's byShop, which carries the
+    // zone the backend stamped on it — one definition, not a copy kept here.
+    renderShopFilterBar(distinctShops(summary.rows), zoneOfShop);
+    var rows = summary.rows.filter(function (r) { return shopMatches(r.seller) && zoneOfShop(r.seller) === (zoneFilter || zoneOfShop(r.seller)); });
     if (rows.length === 0) {
-      list.innerHTML = salesHtml + (shopFilter
-        ? '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วของ "' + esc(shopFilter) + '" ในเดือนนี้</div>'
+      list.innerHTML = salesHtml + ((shopFilters.length || zoneFilter)
+        ? '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วของ "' + esc(shopFilterLabel() || zoneFilter) + '" ในเดือนนี้</div>'
         : '<div class="empty">ยังไม่มีออเดอร์ที่ส่งมอบแล้วในเดือนนี้</div>');
       return;
     }
-    // The server's grandTotal is authoritative for the unfiltered view; once a
-    // shop is picked the total has to be recomputed from just its rows.
-    var total = shopFilter ? rows.reduce(function (sum, r) { return sum + Number(r.amount || 0); }, 0) : summary.grandTotal;
-    list.innerHTML = salesHtml + '<div class="card"><div class="id">สรุปเดือน ' + esc(summary.monthKey) + (shopFilter ? ' · ' + esc(shopFilter) : '') + '</div>' +
+    // The server's grandTotal is authoritative for the unfiltered view; once
+    // anything is picked the total has to be recomputed from just those rows.
+    var filtered = shopFilters.length || zoneFilter;
+    var total = filtered ? rows.reduce(function (sum, r) { return sum + Number(r.amount || 0); }, 0) : summary.grandTotal;
+    var scopeText = shopFilterLabel() || zoneFilter;
+    list.innerHTML = salesHtml + '<div class="card"><div class="id">สรุปเดือน ' + esc(summary.monthKey) + (scopeText ? ' · ' + esc(scopeText) : '') + '</div>' +
       rows.map(function (r) {
         return '<div class="sumRow"><span>' + esc(r.seller) + ' → ' + esc(r.buyer) + ' <span style="color:var(--ink-2)">(' + r.count + ' ออเดอร์)</span></span>' +
           '<b>' + Number(r.amount).toLocaleString('en-US') + '</b></div>';
       }).join('') +
-      '<div class="sumTotal"><span>' + (shopFilter ? 'รวมเฉพาะร้านนี้' : 'รวมทั้งหมด') + '</span><span>' + Number(total).toLocaleString('en-US') + ' บาท</span></div>' +
+      '<div class="sumTotal"><span>' + (filtered ? 'รวมเฉพาะที่เลือก (' + esc(scopeText) + ')' : 'รวมทั้งหมด') + '</span><span>' + Number(total).toLocaleString('en-US') + ' บาท</span></div>' +
       // Payroll export names guests, rooms, and individual payments — same bar
       // as the SLA digest, so it's gated by role here too, not just server-side.
       (me && me.role === 'manager'
@@ -1144,13 +1304,13 @@
 
     // Chip list reflects THIS tab's shops (pre-filter), so switching back to
     // "ทุกร้าน" is always one tap away even after picking one.
-    renderShopFilterBar(distinctShops(tabRows));
-    var rows = shopFilter ? tabRows.filter(function (r) { return r.seller === shopFilter; }) : tabRows;
+    renderShopFilterBar(distinctShops(tabRows), zoneOfShopFromRows(tabRows));
+    var rows = tabRows.filter(function (r) { return shopMatches(r.seller) && zoneMatches(r); });
 
     if (rows.length === 0) {
-      list.innerHTML = shopFilter
+      list.innerHTML = (shopFilters.length || zoneFilter)
         ? '<div class="empty"><div style="font-size:40px">🌙</div>' +
-          '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ไม่มีออเดอร์ค้างของ "' + esc(shopFilter) + '" ตอนนี้</div></div>'
+          '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ไม่มีออเดอร์ค้างของ "' + esc(shopFilterLabel() || zoneFilter) + '" ตอนนี้</div></div>'
         : '<div class="empty"><div style="font-size:40px">🌙</div>' +
           '<div style="font-size:17px;font-weight:700;margin-top:16px;color:var(--ink)">ไม่มีออเดอร์ค้างตอนนี้</div>' +
           // The real ambiguity is "no work" versus "the app is broken" — say which.
@@ -1520,6 +1680,11 @@
     callApi('orderSalesSummaryViaLiff', payload).then(function (s) {
       if (!s || s.error) { if (force) toast(s && s.error ? s.error : 'โหลดยอดขายไม่สำเร็จ', true); return; }
       sales = s;
+      // The clock the panel prints: when these figures were last fetched, so
+      // "สดตอนนี้" is a claim the page can be held to rather than a word.
+      var now = new Date();
+      var pad2 = function (n) { return n < 10 ? '0' + n : '' + n; };
+      lastSalesAt = pad2(now.getHours()) + ':' + pad2(now.getMinutes()) + ':' + pad2(now.getSeconds());
       var json = JSON.stringify(s);
       if (force || json !== lastSalesPayload) {
         lastSalesPayload = json;
@@ -1550,7 +1715,7 @@
   document.getElementById('list').addEventListener('click', function (e) {
     var shopRow = e.target.closest('[data-shop-row]');
     if (shopRow) {
-      shopFilter = shopRow.getAttribute('data-shop-row') || '';
+      toggleShop(shopRow.getAttribute('data-shop-row') || '');
       if (currentTab === 'summary') renderSummary(); else render();
       return;
     }
@@ -1760,7 +1925,10 @@
     callApi('whoAmIViaLiff', { idToken: idToken, accessToken: accessToken }).then(function (whoami) {
       if (!whoami || !whoami.userId) { document.getElementById('whoLine').textContent = 'ยืนยันตัวตนไม่สำเร็จ'; return; }
       me = whoami;
-      document.getElementById('whoLine').textContent = me.actorName + ' (' + me.role + ')';
+      // `label` comes from the backend and already says the right thing for an
+      // unrecognised user; the page was printing a bare name and role instead.
+      document.getElementById('whoLine').textContent = me.label || (me.actorName + ' (' + me.role + ')');
+      renderUnknownIdentity();
       // The backend re-checks this on every manager call regardless — this
       // only decides whether the tab is worth showing at all.
       if (me.role === 'manager' || me.role === 'venue_manager') {
