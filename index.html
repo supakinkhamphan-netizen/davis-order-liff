@@ -328,6 +328,17 @@
 
   // Flow B (ร้านขายร้าน) reads the same four stages with different words —
   // "รอร้านรับ" leaves the shop that placed the order unsure whose move it is.
+  /**
+   * The stage a finished order sits at — delivered or cancelled.
+   *
+   * 2, not 3: orderStageIndex_ on the server returns 0/1/2 and has since the
+   * claim step went on 2026-09-11. Two comparisons here were still written
+   * against a literal 3, which is a test that never fires — so the promise
+   * clock kept counting up on orders that were already delivered, and the
+   * "to do" filter never dropped a finished one.
+   */
+  var STAGE_DONE = 2;
+
   // The server also sends r.stageLabel; this array is the fallback for a row
   // fetched before that field existed.
   // Three since the claim step went (2026-09-11): a keyed order is the
@@ -522,7 +533,7 @@
    * routinely minutes out, cannot move the deadline.
    */
   function promiseClock(r) {
-    if (!r || !r.dueAt || r.stage >= 3 || r.isCancelled) return null;
+    if (!r || !r.dueAt || r.stage >= STAGE_DONE || r.isCancelled) return null;
     var leftSec = Math.round((parseServerStamp(r.dueAt) - serverNowEstimate()) / 1000);
     var leftMin = Math.round(leftSec / 60);
     if (leftSec < 0) return { tier: 'late', text: '🔴 over by ' + humanMins(-leftSec) + ' (target ' + r.targetMinutes + ' min)' };
@@ -645,18 +656,33 @@
   });
 
   /**
-   * When the system does not recognise someone, show the id it actually sees.
+   * When the system does not recognise someone, tell them how to fix it
+   * THEMSELVES, and show the id it actually sees.
    *
-   * Without this the only symptom is a missing sales panel and a role that
-   * reads "staff" — which sent the owner hunting for half an hour on
-   * 2026-09-11. The id is the one thing an admin needs to paste into
-   * Staff_Registry, and whoAmIViaLiff has always returned it. (§4)
+   * This used to say "ask an admin to add this ID to Staff_Registry". That is
+   * now the wrong instruction and an actively harmful one. A LINE multicast
+   * containing somebody who has never added the bot as a friend returns 200
+   * and drops that person silently — no error, nothing in Telemetry, nothing
+   * detectable at runtime. So an id pasted in by an admin produces a row that
+   * looks perfect and a handset that never rings, and the first anyone knows
+   * is an order nobody collected.
+   *
+   * Typing "register" in the chat cannot fail that way: to send it at all you
+   * must already be able to reach the bot, which is the same thing as the bot
+   * being able to reach you. It is the only step that proves delivery, which
+   * is why it is the one on the screen.
+   *
+   * The id stays visible anyway — it is what a manager needs when they type a
+   * venue_manager row by hand, a role self-registration deliberately cannot
+   * grant, and showing it is what ended a half-hour hunt on 2026-09-11. (§4)
    */
   function renderUnknownIdentity() {
     var box = document.getElementById('unknownBox');
     if (!box) return;
     if (!me || me.known !== false) { box.style.display = 'none'; box.innerHTML = ''; return; }
-    box.innerHTML = '<b>The system does not know you yet</b><br>Ask an admin to add this ID to the <b>Staff_Registry</b> tab, then reopen this page' +
+    box.innerHTML = '<b>The system does not know you yet</b><br>' +
+      'Message the bot in LINE and type <b>register</b> (or <b>ลงทะเบียน</b>), pick your job, then reopen this page.' +
+      '<br><span style="opacity:.75">Your ID, only needed if a manager is setting you up by hand:</span>' +
       '<code id="myUserId">' + esc(me.userId) + '</code>' +
       '<button onclick="copyMyUserId()">📋 Copy ID</button>';
     box.style.display = 'block';
@@ -1334,7 +1360,7 @@
       // every claimed row in that window, so for the first few seconds of every
       // shift a runner holding two bags saw an empty "ต้องทำ" — which teaches
       // people not to trust the screen. Unknown identity now shows more, not less.
-      if (r.stage >= 3) return false;
+      if (r.stage >= STAGE_DONE) return false;
       if (!r.assignedUserId) return true;
       return !me || r.assignedUserId === me.userId;
     });
