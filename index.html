@@ -2019,8 +2019,14 @@
     })(0);
   }
 
-  function submitFood(orderId) { submitWithPhoto(orderId, 'submitOrderFoodForm', 2, 'kitchen'); }
-  function submitDeliverForm(orderId) { submitWithPhoto(orderId, 'submitOrderFulfillForm', 3, 'handover'); }
+  // The stage each press lands on. These were 2 and 3 — the numbers from the
+  // four-stage board before the claim step went — and nothing complained:
+  // applyLocalStage only ever raises, so a food press painted the row as
+  // delivered until the next poll, and the timed-out-Save check for a
+  // delivery compared against a stage that does not exist. Named, not typed.
+  var STAGE_READY = 1;
+  function submitFood(orderId) { submitWithPhoto(orderId, 'submitOrderFoodForm', STAGE_READY, 'kitchen'); }
+  function submitDeliverForm(orderId) { submitWithPhoto(orderId, 'submitOrderFulfillForm', STAGE_DONE, 'handover'); }
 
   function selectTab(tab) {
     currentTab = tab;
