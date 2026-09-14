@@ -259,8 +259,13 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v25';
-  var LIFF_ID = '2011319750-tMh303eW';
+  var BUILD = 'v26';
+  // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
+  // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
+  // under a different provider, so every id this page saw was a different id
+  // from the one the bot sees on a webhook — twelve registered people, none
+  // of them recognised here. Same provider, same id; the sheet works as is.
+  var LIFF_ID = '2011596506-zeXSQTrJ';
   var API_URL = 'https://script.google.com/macros/s/AKfycbw67bRdK_Ff-FljQNOAV-HZIVHnY-qfarGYRPXDZJckioQrxYf9LlQ1yAhO2IIGjq7-Xw/exec';
   // ----------------------------------------------
 
