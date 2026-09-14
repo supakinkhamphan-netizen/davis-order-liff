@@ -1289,7 +1289,7 @@
     { key: 0, title: '🍳 Ready — go and collect' },
     { key: 1, title: '⚡ กดใบนี้ก่อน' },
     { key: 2, title: '🅿 ค้างนาน — กดได้เลย ไม่หักคุณ' },
-    { key: 3, title: '🔵 กำลังทำอยู่' },
+    { key: 3, title: '✅ เสร็จแล้ว — ส่งมอบ / ยกเลิก' },
     { key: 4, title: '⚪ ยังไม่ถึงเกณฑ์', collapsed: true },
   ];
   var group4Open = false;
@@ -1339,7 +1339,17 @@
   }
 
   function miniRowHtml(r) {
-    var c = clockFor(r);
+    // A finished order shows what happened to it. On 2026-09-14 a runner's
+    // Save timed out on hotel wifi AFTER the server had written the delivery,
+    // and this row went on showing "in the kitchen 8 min" — so they retried,
+    // and the manager thought the press had failed. The row now says
+    // "Delivered 14:25", which is the confirmation the timeout ate.
+    var done = r.stage >= STAGE_DONE;
+    var c = done
+      ? (r.isCancelled
+          ? { tier: 'late', text: '🚫 Cancelled' }
+          : { tier: 'ok', text: '✅ Delivered' + (r.deliveredAt ? ' ' + String(r.deliveredAt).slice(11, 16) : '') + (r.assignedName ? ' · ' + r.assignedName : '') })
+      : clockFor(r);
     return '<div class="card" style="position:relative" id="card-' + r.orderId + '">' +
       '<div class="clock ' + c.tier + '" id="clk-' + r.orderId + '">' + esc(c.text) + '</div>' +
       '<div class="rowMini"><div class="body">' +
@@ -1971,9 +1981,30 @@
         forceRefresh();
       }).catch(function () {
         clearInterval(uploadTimer);
-        errEl.style.color = '';
-        submitBtn.disabled = false;
-        errEl.textContent = '⚠ Could not send. The photo is still on your phone — tap Save again, no need to retake it.';
+        // The request died — but the upload may have landed before it did.
+        // Two photos over hotel wifi can outlive the 90-second timeout, and
+        // the server writes the row before it answers. Ask, before telling
+        // someone to send it all again and then showing them "already
+        // delivered" for their trouble.
+        errEl.style.color = 'var(--ink-2)';
+        errEl.textContent = 'Checking whether it got through…';
+        callApi('listOrderStatusRows', { idToken: idToken, accessToken: accessToken, requestGroupId: REQUEST_GROUP, fresh: true }).then(function (rows) {
+          var row = (rows || []).filter(function (x) { return x && x.orderId === orderId; })[0];
+          if (row && row.stage >= nextStage) {
+            errEl.style.color = '';
+            errEl.textContent = '';
+            toast('✅ Saved ' + orderId + ' — the confirmation was lost on the way, but the order is done');
+            openForms = {};
+            applyLocalStage(orderId, nextStage);
+            forceRefresh();
+            return;
+          }
+          throw new Error('not saved');
+        }).catch(function () {
+          errEl.style.color = '';
+          submitBtn.disabled = false;
+          errEl.textContent = '⚠ Could not send. The photo is still on your phone — tap Save again, no need to retake it.';
+        });
       });
     });
   }
