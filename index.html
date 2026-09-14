@@ -236,6 +236,7 @@
     <!-- Hidden until whoAmI resolves a manager/venue_manager role — 'staff'
          never sees this tab exist, same boundary the backend enforces. -->
     <button id="tabManager" style="display:none">ผู้บริหาร</button>
+    <button id="bellBtn" onclick="toggleBell()" title="Sound on new order / food ready" style="margin-left:auto;flex:0 0 auto;min-width:44px">🔔</button>
   </div>
   <div id="offlineBar"><span id="offlineText"></span><button onclick="forceRefresh()">Try again</button></div>
   <div id="scopeBanner" style="display:none"></div>
@@ -551,8 +552,12 @@
   /** Which section a row belongs in. Ordering is by what it costs to leave the
    *  order alone, not by when it arrived. */
   function groupOf(r) {
+    // Phase 19: the board is where a runner learns the food is ready — there
+    // is no card in LINE any more. So "ready to collect" is its own section,
+    // first on the page, drawn as a full card with the Delivered button on it.
+    if (r.stage === 1) return 0;
     if (r.stage === 0) return kitchenClock(r).group || 1;
-    return 3; // past the kitchen — being delivered, or already done
+    return 3; // delivered or cancelled, on its way off the board
   }
 
   // callApi() and firstBoard are declared in the block above the SDK tag.
@@ -877,7 +882,7 @@
     { key: 'custom', label: 'เลือกช่วงเอง' },
   ];
 
-  function isSalesViewer() { return !!me && (me.role === 'manager' || me.role === 'venue_manager'); }
+  function isSalesViewer() { return !!me && (me.canSeeSales || me.role === 'manager' || me.role === 'venue_manager'); }
   function baht(n) { return Number(n || 0).toLocaleString('en-US'); }
 
   /**
@@ -1153,7 +1158,7 @@
     list.innerHTML = html;
   }
 
-  function isFullManager() { return !!me && me.role === 'manager'; }
+  function isFullManager() { return !!me && (me.isManager || me.role === 'manager'); }
 
   /**
    * Fines waiting on a decision. Filed appeals come first and carry the three
@@ -1281,7 +1286,7 @@
   }
 
   var GROUP_META = [
-    null,
+    { key: 0, title: '🍳 Ready — go and collect' },
     { key: 1, title: '⚡ กดใบนี้ก่อน' },
     { key: 2, title: '🅿 ค้างนาน — กดได้เลย ไม่หักคุณ' },
     { key: 3, title: '🔵 กำลังทำอยู่' },
@@ -1381,14 +1386,14 @@
       return;
     }
 
-    var buckets = { 1: [], 2: [], 3: [], 4: [] };
+    var buckets = { 0: [], 1: [], 2: [], 3: [], 4: [] };
     rows.forEach(function (r) { buckets[groupOf(r)].push(r); });
     Object.keys(buckets).forEach(function (k) {
       buckets[k].sort(function (a, b) { return clockFor(b).sec - clockFor(a).sec; }); // longest waiting first
     });
 
     var html = '';
-    [1, 2, 3, 4].forEach(function (g) {
+    [0, 1, 2, 3, 4].forEach(function (g) {
       var items = buckets[g];
       if (!items.length) return;
       var meta = GROUP_META[g];
@@ -1533,6 +1538,91 @@
   /** Skips a tick rather than queuing — a slow poll response and the next
    * timer firing at the same time is what made the page feel sluggish
    * (requests piling up in flight, each one racing to repaint last). */
+  // ---- The bell (Phase 19) ------------------------------------------------
+  //
+  // LINE no longer says "food ready" or "new order for your kitchen" to
+  // anyone privately; the board does. Each poll is diffed against the last:
+  // an order that was not there before is NEW, one whose stage just became 1
+  // is READY. Which of the two a person hears depends on the job they
+  // registered — a kitchen hears its own shop's new orders, a runner hears
+  // ready, anyone with both or neither hears both.
+  //
+  // A browser will not play sound before the page has been touched once, so
+  // the AudioContext is created on the first tap and the first ring may be
+  // silent — the vibration and the title badge still fire.
+  var seenStage = null;       // orderId -> stage as of the last poll; null until the first
+  var audioCtx = null;
+  var soundOn = true;
+  try { soundOn = localStorage.getItem('bellOff') !== '1'; } catch (e) {}
+  function unlockAudio() {
+    if (audioCtx) return;
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audioCtx = null; }
+  }
+  document.addEventListener('touchstart', unlockAudio, { once: true, passive: true });
+  document.addEventListener('click', unlockAudio, { once: true });
+  function beep(times) {
+    if (!soundOn || !audioCtx) return;
+    try {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      for (var i = 0; i < times; i++) {
+        var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.type = 'sine'; o.frequency.value = i % 2 ? 1320 : 880;
+        g.gain.value = 0.0001;
+        o.connect(g); g.connect(audioCtx.destination);
+        var t = audioCtx.currentTime + i * 0.22;
+        g.gain.exponentialRampToValueAtTime(0.4, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+        o.start(t); o.stop(t + 0.2);
+      }
+    } catch (e) {}
+  }
+  function mineToHear(kind, r) {
+    if (!me) return true;
+    var kitchen = !!me.isKitchen, runner = !!me.isRunner;
+    if (kitchen && !runner) return kind === 'new' && (!me.venues || !me.venues.length || me.venues.indexOf(r.seller) >= 0);
+    if (runner && !kitchen) return kind === 'ready';
+    return true;
+  }
+  var unread = 0;
+  function ring(kind, r) {
+    if (!mineToHear(kind, r)) return;
+    beep(kind === 'ready' ? 3 : 2);
+    try { if (navigator.vibrate) navigator.vibrate(kind === 'ready' ? [200, 100, 200, 100, 200] : [200, 100, 200]); } catch (e) {}
+    unread++;
+    document.title = '(' + unread + ') Davis Order';
+    var msg = kind === 'ready'
+      ? '🍳 ' + (r.seller || '') + ' — ' + (r.subtitle || r.orderId) + ' is ready to collect'
+      : '🔔 New order — ' + (r.seller || '') + ' · ' + (r.subtitle || r.orderId);
+    toast(msg);
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) { unread = 0; document.title = 'Davis Order'; }
+  });
+  function noteArrivals(rows) {
+    if (seenStage === null) {
+      // First poll of the session: everything on the board is old news.
+      seenStage = {};
+      (rows || []).forEach(function (r) { seenStage[r.orderId] = r.stage; });
+      return;
+    }
+    var next = {};
+    (rows || []).forEach(function (r) {
+      next[r.orderId] = r.stage;
+      var before = seenStage[r.orderId];
+      if (before === undefined && r.stage === 0) ring('new', r);
+      else if (before !== undefined && before < 1 && r.stage === 1) ring('ready', r);
+    });
+    seenStage = next;
+  }
+  function toggleBell() {
+    soundOn = !soundOn;
+    try { localStorage.setItem('bellOff', soundOn ? '0' : '1'); } catch (e) {}
+    var b = document.getElementById('bellBtn');
+    if (b) b.textContent = soundOn ? '🔔' : '🔕';
+    unlockAudio();
+    if (soundOn) beep(1);
+  }
+
   function refresh() {
     if (refreshing) return;
     // Never repaint over an open form. render() rebuilds list.innerHTML
@@ -1551,6 +1641,7 @@
       if (myGeneration !== boardGeneration) return; // a write landed mid-flight; this data predates it
       if (!rows || rows.error) { showOffline(rows && rows.error); return; }
       noteServerNow(rows);
+      noteArrivals(rows);
       allRows = rows;
       // Re-rendering identical data throws away every open form's typed
       // amount and re-decodes the same HTML — repaint only on a real change.
@@ -1996,9 +2087,16 @@
       renderQuotaWarning();
       // The backend re-checks this on every manager call regardless — this
       // only decides whether the tab is worth showing at all.
-      if (me.role === 'manager' || me.role === 'venue_manager') {
+      if (me.canSeeSales || me.role === 'manager' || me.role === 'venue_manager') {
         document.getElementById('tabManager').style.display = '';
       }
+      // Phase 19: a kitchen hand opens on their own shop's queue. Only when
+      // they have not chosen shops themselves — the chips still work.
+      if (me.isKitchen && !me.isRunner && me.venues && me.venues.length && !shopFilters.length) {
+        shopFilters = me.venues.slice();
+      }
+      var bell = document.getElementById('bellBtn');
+      if (bell) bell.textContent = soundOn ? '🔔' : '🔕';
       // The brief card's "ดูรายละเอียด" deep link. Applied here rather than at
       // boot because the sales panel is manager-only — the role is not known
       // until whoAmI comes back, and jumping a 'staff' user to a tab whose
