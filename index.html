@@ -261,7 +261,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v30';
+  var BUILD = 'v31';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -466,7 +466,10 @@
   }
   function saveStaleBoard(rows) {
     if (REQUEST_GROUP) return;
-    try { localStorage.setItem(STALE_KEY, JSON.stringify({ at: Date.now(), rows: rows })); } catch (e) {}
+    // The server clock is saved with the board, so the next open can anchor
+    // its countdowns immediately: v30 painted every card as "cooking 0 min"
+    // for the seconds before whoAmI answered, because serverNowMs was 0.
+    try { localStorage.setItem(STALE_KEY, JSON.stringify({ at: Date.now(), rows: rows, serverNowMs: serverNowMs ? serverNowMs + (performance.now() - serverNowLocal) : 0 })); } catch (e) {}
   }
   var staleBoard = loadStaleBoard();
   var summary = null; // month-to-date totals, loaded lazily when the tab is opened
@@ -2262,6 +2265,12 @@
     if (staleBoard && allRows === null) {
       allRows = staleBoard.rows;
       lastPayload = JSON.stringify(staleBoard.rows);
+      // Provisional clock: the server time we last knew plus how long this
+      // phone says has passed. whoAmI replaces it with a fresh anchor.
+      if (staleBoard.serverNowMs && !serverNowMs) {
+        serverNowMs = staleBoard.serverNowMs + (Date.now() - staleBoard.at);
+        serverNowLocal = performance.now();
+      }
       document.getElementById('lastUpdated').textContent = 'From ' + Math.max(1, Math.round((Date.now() - staleBoard.at) / 60000)) + ' min ago — updating…';
     }
     if (REQUEST_GROUP) {
