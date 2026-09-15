@@ -259,7 +259,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v26';
+  var BUILD = 'v27';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -474,7 +474,6 @@
   //
   // The cashier thresholds that used to sit here went with the claim step on
   // 2026-09-11 — there is one window now, and it opens when the order does.
-  var KITCHEN_LIMIT = 1320; // 22 minutes — just under the 23-minute kitchen budget
 
   /** Seconds since a "yyyy-MM-dd HH:mm:ss" stamp, measured against the SERVER
    *  clock we were handed, not the phone's — an old handset is routinely
@@ -518,13 +517,25 @@
    *  reports it (order-sla.js). Saying so out loud is the whole point: fear of
    *  being charged is why people hesitate on this button too. */
   function kitchenClock(r) {
-    // From the order, not from a claim: `keyedAt` is only still sent for rows
-    // written before 2026-09-11.
-    var sec = secondsSince(r.orderedAt);
-    if (sec >= KITCHEN_LIMIT) {
-      return { tier: 'free', sec: sec, text: '🍳 in the kitchen ' + humanMins(sec) + ' · past the kitchen target — tap it, you are not charged' };
+    // Phase 20: the server decides where the kitchen's clock starts (the
+    // "Bill received" tap, else keying) and how long it has for THIS order —
+    // busy days and big bills get more. The page only counts.
+    if (r.is24 && r.stage === 0 && !r.billAt) {
+      var wait = secondsSince(r.orderedAt);
+      return { tier: wait >= 600 ? 'free' : 'calm', sec: wait,
+        text: '🧾 waiting for the POS bill ' + humanMins(wait) + ' — tap Bill received when it arrives' };
     }
-    return { tier: 'calm', sec: sec, text: '🍳 in the kitchen ' + humanMins(sec) };
+    var start = r.kitchenStartAt || r.orderedAt;
+    var sec = secondsSince(start);
+    var budgetSec = (r.kitchenBudgetMin || 23) * 60;
+    var why = r.kitchenBudgetText ? ' (target ' + r.kitchenBudgetText + ')' : '';
+    if (sec >= budgetSec) {
+      return { tier: 'free', sec: sec, text: '🍳 cooking ' + humanMins(sec) + why + ' · past the kitchen target — tap it, you are not charged' };
+    }
+    if (sec >= budgetSec - 300) {
+      return { tier: 'free', sec: sec, text: '🍳 cooking ' + humanMins(sec) + ' · ' + humanMins(budgetSec - sec) + ' left' + why };
+    }
+    return { tier: 'calm', sec: sec, text: '🍳 cooking ' + humanMins(sec) + why };
   }
 
   function clockFor(r) { return kitchenClock(r); }
@@ -789,12 +800,23 @@
     if (row.stage === 2) return '';
     if (mini) {
       // A compact row: whoever is working it already knows what it is.
-      var label = (row.stage === 0 && row.is24) ? 'Food ready'
+      var label = (row.stage === 0 && row.is24 && !row.billAt) ? 'Bill received'
+        : (row.stage === 0 && row.is24) ? 'Food ready'
         : (row.stage === 0) ? 'Delivered'
         : 'Deliver';
       // Every step opens a form now: the bare 24BLVD close was what let an
       // order finish with no bill and no amount, and the backend refuses it.
+      if (label === 'Bill received') {
+        return '<button class="miniBtn" id="bill-' + row.orderId + '" onclick="doBillReceived(\'' + row.orderId + '\')">' + label + '</button>';
+      }
       return '<button class="miniBtn" id="btn-' + row.orderId + '" onclick="toggleForm(\'' + row.orderId + '\')">' + label + '</button>';
+    }
+    if (row.stage === 0 && row.is24 && !row.billAt) {
+      // Phase 20: one tap, nothing to type — and the backend refuses "food
+      // ready" until it has happened, so the second button waits behind it.
+      return '<button class="actionBtn" id="bill-' + row.orderId + '" onclick="doBillReceived(\'' + row.orderId + '\')" ' +
+        'style="background:#E8EBDD;color:#14231B">🧾 Bill received — the POS ticket is here</button>' +
+        '<div style="font-size:13px;color:var(--ink-2);margin-top:6px">Your kitchen clock starts at this tap. Food ready comes after.</div>';
     }
     if (row.stage === 0 && row.is24) {
       return miniFormHtml(row.orderId, '🍳 Food ready (kitchen taps this)', 'submitFood', 'kitchen');
@@ -1815,6 +1837,20 @@
   // doClaim() lived here. There is no claim step any more (2026-09-11): an
   // order is the kitchen's the moment it is keyed, so the first button on a
   // card is the kitchen's, not a runner's.
+
+  /** Phase 20 — the kitchen says the POS ticket arrived. No form: one tap. */
+  function doBillReceived(orderId) {
+    withButtonBusy('bill-' + orderId, 'Saving...', function () {
+      return callApi('billReceivedViaLiff', { idToken: idToken, accessToken: accessToken, orderId: orderId }).then(function (r) {
+        if (!r.ok) { toast(r.error || r.reason || 'Could not save', true); return; }
+        toast('🧾 Bill received — your clock starts now');
+        // Paint the tap locally so the Food ready button appears at once;
+        // the next poll confirms it from the server.
+        (allRows || []).forEach(function (x) { if (x.orderId === orderId) { x.billAt = 'now'; x.kitchenStartAt = ''; } });
+        lastPayload = ''; boardGeneration++; render(); forceRefresh();
+      });
+    });
+  }
 
   function doNudge(orderId) {
     withButtonBusy('nudge-' + orderId, 'Nudging...', function () {
