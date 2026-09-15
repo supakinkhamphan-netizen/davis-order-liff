@@ -261,7 +261,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v28';
+  var BUILD = 'v29';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -1877,9 +1877,16 @@
    * subscribes to the board document; every publish repaints within a second.
    * Any failure flips back to polling — the page never gets stuck on this.
    */
+  // What happened to the listener, written to the Telemetry tab — a LINE
+  // webview has no console anyone can read. Best effort, never awaited.
+  function clientLog(msg) {
+    try { callApi('clientLogViaLiff', { idToken: idToken, accessToken: accessToken, msg: BUILD + ' ' + msg }).catch(function () {}); } catch (e) {}
+  }
   function startRealtime(whoami) {
     if (REQUEST_GROUP) return; // a single-request view needs rows of any age; that stays on the API
-    if (!whoami || !whoami.firebaseToken || !whoami.firebaseProjectId || !whoami.firebaseApiKey || typeof firebase === 'undefined') return;
+    if (!whoami || !whoami.firebaseToken) { clientLog('realtime skipped: no firebaseToken (known=' + (whoami && whoami.known) + ')'); return; }
+    if (!whoami.firebaseProjectId || !whoami.firebaseApiKey) { clientLog('realtime skipped: no project/apiKey'); return; }
+    if (typeof firebase === 'undefined') { clientLog('realtime skipped: firebase SDK did not load'); return; }
     try {
       if (!firebase.apps.length) firebase.initializeApp({ projectId: whoami.firebaseProjectId, apiKey: whoami.firebaseApiKey, authDomain: whoami.firebaseProjectId + '.firebaseapp.com' });
       firebase.auth().signInWithCustomToken(whoami.firebaseToken).then(function () {
@@ -1890,7 +1897,8 @@
           if (!snap.exists) return;
           var data = snap.data() || {};
           var rows;
-          try { rows = JSON.parse(data.json || '[]'); } catch (e) { return; }
+          try { rows = JSON.parse(data.json || '[]'); } catch (e) { clientLog('realtime: bad json'); return; }
+          if (!realtime.live) clientLog('realtime live: ' + rows.length + ' rows, published ' + (data.publishedAt || '?'));
           realtime.live = true;
           realtime.failed = false;
           // Same treatment as a polled response — minus noteServerNow: a
@@ -1901,14 +1909,16 @@
           applyRealtimeRows(rows, data.publishedAt);
         }, function (err) {
           console.error('realtime', err);
+          clientLog('realtime snapshot error: ' + (err && (err.code + ' ' + err.message)));
           realtime.live = false; realtime.failed = true;
           refresh();
         });
       }).catch(function (err) {
         console.error('firebase sign-in', err);
+        clientLog('firebase sign-in error: ' + (err && (err.code + ' ' + err.message)));
         realtime.failed = true;
       });
-    } catch (e) { console.error('firebase', e); realtime.failed = true; }
+    } catch (e) { console.error('firebase', e); clientLog('firebase init error: ' + e); realtime.failed = true; }
   }
   var pendingRealtime = null; // a snapshot that arrived while a form was open
   function applyRealtimeRows(rows, publishedAt) {
