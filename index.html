@@ -261,7 +261,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v29';
+  var BUILD = 'v30';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -1715,6 +1715,10 @@
     // as the form closes.
     if (hasOpenForm()) return;
     if (!idToken && !accessToken) return; // not identified yet — the board requires a credential (either kind)
+    // v30: once Firestore is delivering the board, no caller may poll over it
+    // (v29 still showed "Updated …" from a stray poll that landed after the
+    // snapshot). Presses go through forceRefresh, which is separate.
+    if (realtime.live && !REQUEST_GROUP) return;
     refreshing = true;
     var myGeneration = boardGeneration;
     var pending = firstBoard || callApi('listOrderStatusRows', { idToken: idToken, accessToken: accessToken, requestGroupId: REQUEST_GROUP });
@@ -1882,8 +1886,11 @@
   function clientLog(msg) {
     try { callApi('clientLogViaLiff', { idToken: idToken, accessToken: accessToken, msg: BUILD + ' ' + msg }).catch(function () {}); } catch (e) {}
   }
+  var realtimeRetries = 0;
   function startRealtime(whoami) {
     if (REQUEST_GROUP) return; // a single-request view needs rows of any age; that stays on the API
+    realtime.whoami = whoami;
+    realtime.startedAt = performance.now();
     if (!whoami || !whoami.firebaseToken) { clientLog('realtime skipped: no firebaseToken (known=' + (whoami && whoami.known) + ')'); return; }
     if (!whoami.firebaseProjectId || !whoami.firebaseApiKey) { clientLog('realtime skipped: no project/apiKey'); return; }
     if (typeof firebase === 'undefined') { clientLog('realtime skipped: firebase SDK did not load'); return; }
@@ -1898,8 +1905,9 @@
           var data = snap.data() || {};
           var rows;
           try { rows = JSON.parse(data.json || '[]'); } catch (e) { clientLog('realtime: bad json'); return; }
-          if (!realtime.live) clientLog('realtime live: ' + rows.length + ' rows, published ' + (data.publishedAt || '?'));
+          if (!realtime.live) clientLog('realtime live in ' + Math.round(performance.now() - realtime.startedAt) + 'ms: ' + rows.length + ' rows, published ' + (data.publishedAt || '?') + (snap.metadata && snap.metadata.fromCache ? ' (from cache)' : ''));
           realtime.live = true;
+          realtimeRetries = 0;
           realtime.failed = false;
           // Same treatment as a polled response — minus noteServerNow: a
           // snapshot's stamp is the publish time, which can be minutes old
@@ -1909,9 +1917,17 @@
           applyRealtimeRows(rows, data.publishedAt);
         }, function (err) {
           console.error('realtime', err);
-          clientLog('realtime snapshot error: ' + (err && (err.code + ' ' + err.message)));
+          clientLog('realtime snapshot error: ' + (err && (err.code + ' ' + err.message)) + ' (retry ' + realtimeRetries + ')');
           realtime.live = false; realtime.failed = true;
           refresh();
+          // A listener that errors is cancelled for good by the SDK; come back
+          // with a fresh token a few times before settling for the poll.
+          if (realtimeRetries < 4) {
+            realtimeRetries++;
+            setTimeout(function () {
+              callApi('whoAmIViaLiff', { idToken: idToken, accessToken: accessToken }).then(function (w) { if (w && w.firebaseToken) startRealtime(w); }).catch(function () {});
+            }, 5000 * realtimeRetries);
+          }
         });
       }).catch(function (err) {
         console.error('firebase sign-in', err);
