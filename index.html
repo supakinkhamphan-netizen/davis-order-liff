@@ -14,6 +14,8 @@
 <link rel="preconnect" href="https://script.google.com" crossorigin>
 <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
 <link rel="preconnect" href="https://static.line-scdn.net" crossorigin>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <!-- Loaded non-blocking: a webfont must never hold up first paint on a phone
      on hotel wifi. The system stack below renders immediately and Inter swaps
@@ -259,7 +261,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v27';
+  var BUILD = 'v28';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -279,17 +281,21 @@
     // hangs, the button stays disabled, and the runner is stuck with no way
     // forward. Uploads get longer than reads because they carry photos.
     var isUpload = /^submitOrder/.test(fn);
-    var controller = typeof AbortController === 'function' ? new AbortController() : null;
-    var timer = setTimeout(function () { if (controller) controller.abort(); }, isUpload ? 90000 : 20000);
-    var opts = {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ liffCall: true, fn: fn, payload: payload || {} }),
-    };
-    if (controller) opts.signal = controller.signal;
-    return fetch(API_URL, opts)
-      .then(function (r) { return r.json(); })
-      .finally(function () { clearTimeout(timer); });
+    // A read that has not answered in 12 s is not coming (the server's own
+    // floor is ~2 s); one retry beats sitting on a dead socket for 20 s.
+    // Writes are never retried — a second press is a second write.
+    var isRead = /^(listOrderStatusRows|whoAmIViaLiff|monthToDateSummaryViaLiff|orderSalesSummaryViaLiff)$/.test(fn);
+    var body = JSON.stringify({ liffCall: true, fn: fn, payload: payload || {} });
+    function attempt() {
+      var controller = typeof AbortController === 'function' ? new AbortController() : null;
+      var timer = setTimeout(function () { if (controller) controller.abort(); }, isUpload ? 90000 : (isRead ? 12000 : 20000));
+      var opts = { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: body };
+      if (controller) opts.signal = controller.signal;
+      return fetch(API_URL, opts)
+        .then(function (r) { return r.json(); })
+        .finally(function () { clearTimeout(timer); });
+    }
+    return isRead ? attempt().catch(function () { return attempt(); }) : attempt();
   }
 
   /**
@@ -330,6 +336,11 @@
 </script>
 
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<!-- Firebase (compat builds: plain globals, no bundler). Only used once whoAmI
+     hands back a custom token; a failed load just leaves the board on the poll. -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script>
 
   // Flow B (ร้านขายร้าน) reads the same four stages with different words —
@@ -433,6 +444,31 @@
   }
 
   var allRows = null; // null = never loaded yet (shows skeleton, not "empty")
+  // ---- Realtime (v28) ----
+  // The board reaches the phone through a Firestore document the backend
+  // publishes after every write (firebase-bridge.js). While that listener is
+  // live the 10 s poll is off. If Firebase is not configured, the token is
+  // missing, or the listener breaks, the poll takes over exactly as before.
+  var realtime = { db: null, unsubscribe: null, live: false, failed: false };
+  // The last board this phone drew, kept so the next open paints it at once
+  // instead of skeleton cards for 3–6 s. Only ever this device's own last
+  // view — the page still refuses to fetch anything without a token.
+  var STALE_KEY = 'davisBoard.v1';
+  function loadStaleBoard() {
+    if (REQUEST_GROUP) return null;
+    try {
+      var raw = localStorage.getItem(STALE_KEY);
+      if (!raw) return null;
+      var saved = JSON.parse(raw);
+      if (!saved || !saved.rows || Date.now() - saved.at > 6 * 3600000) return null; // a night is over by then
+      return saved;
+    } catch (e) { return null; }
+  }
+  function saveStaleBoard(rows) {
+    if (REQUEST_GROUP) return;
+    try { localStorage.setItem(STALE_KEY, JSON.stringify({ at: Date.now(), rows: rows })); } catch (e) {}
+  }
+  var staleBoard = loadStaleBoard();
   var summary = null; // month-to-date totals, loaded lazily when the tab is opened
   // Sales figures for the picked range (managers only). `sales` is null until
   // the first successful load; salesRange is what the chips currently say.
@@ -875,8 +911,17 @@
   function toggleForm(orderId) {
     var wasOpen = !!openForms[orderId];
     openForms = {};
-    openForms[orderId] = !wasOpen;
+    // BUG FIXED (v28): closing wrote `openForms[id] = false`, and the poll's
+    // "is a form open" test counted keys, not values — so tapping a form
+    // closed froze the board until the next save or a reload. A closed form
+    // is now simply absent.
+    if (!wasOpen) openForms[orderId] = true;
     render();
+    // A board that arrived while the form was open is applied now.
+    if (!hasOpenForm() && pendingRealtime) applyRealtimeRows(pendingRealtime, '');
+  }
+  function hasOpenForm() {
+    return Object.keys(openForms).some(function (k) { return !!openForms[k]; });
   }
 
   function skeletonCards() {
@@ -1668,8 +1713,8 @@
     // repaints the board every few seconds, and the runner mid-entry is told
     // "แนบรูปบิลก่อน" for a bill they just attached. Polling resumes as soon
     // as the form closes.
-    if (Object.keys(openForms).length) return;
-    if (!idToken) return; // not identified yet — the board now requires it
+    if (hasOpenForm()) return;
+    if (!idToken && !accessToken) return; // not identified yet — the board requires a credential (either kind)
     refreshing = true;
     var myGeneration = boardGeneration;
     var pending = firstBoard || callApi('listOrderStatusRows', { idToken: idToken, accessToken: accessToken, requestGroupId: REQUEST_GROUP });
@@ -1684,7 +1729,7 @@
       // amount and re-decodes the same HTML — repaint only on a real change.
       clearOffline();
       var payload = JSON.stringify(rows);
-      if (payload !== lastPayload) { lastPayload = payload; render(); }
+      if (payload !== lastPayload) { lastPayload = payload; render(); saveStaleBoard(rows); }
       // Same tick, no extra timer: the boss asked for the sales figures to be
       // live, and the board is already polling. Only fetched while the tab
       // that shows them is actually open.
@@ -1783,6 +1828,14 @@
     stopPolling();
     pollTimer = setInterval(function () {
       if (document.visibilityState !== 'visible') return;
+      // Firestore is delivering the board — the poll would only pay the
+      // ~2 s server floor to learn nothing new.
+      if (realtime.live && currentTab !== 'summary') return;
+      // An empty, quiet board does not need a fresh read every 10 s: every
+      // third tick is plenty until something arrives (a new order lands via
+      // Firestore anyway, or on the next tick).
+      pollTick++;
+      if (!realtime.live && isBoardIdle() && pollTick % 3 !== 0) return;
       // The sales panel used to die here. `refresh()` is the only caller of
       // loadSales, and this early return meant that the moment the สรุป tab
       // was opened the numbers froze at whatever they were on arrival — the
@@ -1806,6 +1859,66 @@
 
   function stopPolling() {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+  var pollTick = 0;
+  /** No order still needs anybody: nothing on the board is before the delivered stage. */
+  function isBoardIdle() {
+    if (!allRows || !allRows.length) return true;
+    return allRows.every(function (r) { return r.isCancelled || (r.stage || 0) >= 3; });
+  }
+  // Coming back to the app: the board may be minutes old. Fetch now instead
+  // of waiting up to a full tick — the listener, if live, has already done it.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && !realtime.live && authState === 'ok') refresh();
+  });
+
+  /**
+   * Firestore listener. Signs in with the custom token whoAmI returned and
+   * subscribes to the board document; every publish repaints within a second.
+   * Any failure flips back to polling — the page never gets stuck on this.
+   */
+  function startRealtime(whoami) {
+    if (REQUEST_GROUP) return; // a single-request view needs rows of any age; that stays on the API
+    if (!whoami || !whoami.firebaseToken || !whoami.firebaseProjectId || !whoami.firebaseApiKey || typeof firebase === 'undefined') return;
+    try {
+      if (!firebase.apps.length) firebase.initializeApp({ projectId: whoami.firebaseProjectId, apiKey: whoami.firebaseApiKey });
+      firebase.auth().signInWithCustomToken(whoami.firebaseToken).then(function () {
+        realtime.db = firebase.firestore();
+        var parts = String(whoami.firebaseBoardDoc || 'boards/current').split('/');
+        if (realtime.unsubscribe) realtime.unsubscribe();
+        realtime.unsubscribe = realtime.db.collection(parts[0]).doc(parts[1]).onSnapshot(function (snap) {
+          if (!snap.exists) return;
+          var data = snap.data() || {};
+          var rows;
+          try { rows = JSON.parse(data.json || '[]'); } catch (e) { return; }
+          realtime.live = true;
+          realtime.failed = false;
+          // Same treatment as a polled response — minus noteServerNow: a
+          // snapshot's stamp is the publish time, which can be minutes old
+          // when a phone first opens, and the countdown clock is anchored to
+          // whoAmI's fresh serverNow instead.
+          if (hasOpenForm()) { pendingRealtime = rows; return; }
+          applyRealtimeRows(rows, data.publishedAt);
+        }, function (err) {
+          console.error('realtime', err);
+          realtime.live = false; realtime.failed = true;
+          refresh();
+        });
+      }).catch(function (err) {
+        console.error('firebase sign-in', err);
+        realtime.failed = true;
+      });
+    } catch (e) { console.error('firebase', e); realtime.failed = true; }
+  }
+  var pendingRealtime = null; // a snapshot that arrived while a form was open
+  function applyRealtimeRows(rows, publishedAt) {
+    pendingRealtime = null;
+    noteArrivals(rows);
+    allRows = rows;
+    clearOffline();
+    var payload = JSON.stringify(rows);
+    if (payload !== lastPayload) { lastPayload = payload; render(); saveStaleBoard(rows); }
+    document.getElementById('lastUpdated').textContent = '⚡ Live · ' + (publishedAt ? String(publishedAt).slice(11, 16) : new Date().toLocaleTimeString('en-GB'));
   }
 
   function withButtonBusy(orderId, label, fn) {
@@ -2118,6 +2231,13 @@
     document.getElementById('buildTag').textContent = BUILD;
     document.getElementById('boot').style.display = 'none';
     document.getElementById('app').style.display = 'block';
+    // This phone's own last board, painted before LINE has even answered.
+    // The countdowns wait for a real serverNow (they read as "—" until then).
+    if (staleBoard && allRows === null) {
+      allRows = staleBoard.rows;
+      lastPayload = JSON.stringify(staleBoard.rows);
+      document.getElementById('lastUpdated').textContent = 'From ' + Math.max(1, Math.round((Date.now() - staleBoard.at) / 60000)) + ' min ago — updating…';
+    }
     if (REQUEST_GROUP) {
       currentTab = 'all';
       document.getElementById('tabAll').classList.add('active');
@@ -2142,6 +2262,7 @@
       return;
     }
     authState = 'ok';
+    lastPayload = ''; // a stale board on screen must be repainted by the first real one even if identical-looking
     refresh();
     startPolling();
     // Clock text only; the layout is left alone (see tickClocks).
@@ -2155,9 +2276,12 @@
         img.style.display = 'block';
       }
     }).catch(function () {});
-    callApi('whoAmIViaLiff', { idToken: idToken, accessToken: accessToken }).then(function (whoami) {
+    callApi('whoAmIViaLiff', { idToken: idToken, accessToken: accessToken, clientMs: Math.round(performance.now()) }).then(function (whoami) {
       if (!whoami || !whoami.userId) { document.getElementById('whoLine').textContent = 'Could not confirm who you are'; return; }
       me = whoami;
+      // The clock anchor comes from here (a fresh request), never from a board snapshot.
+      if (whoami.serverNow) noteServerNow([{ serverNow: whoami.serverNow }]);
+      startRealtime(whoami);
       // `label` comes from the backend and already says the right thing for an
       // unrecognised user; the page was printing a bare name and role instead.
       document.getElementById('whoLine').textContent = me.label || (me.actorName + ' (' + me.role + ')');

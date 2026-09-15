@@ -11,7 +11,7 @@ It is one half of a two-repo system:
 | Part | Repo | Deploy |
 |---|---|---|
 | Frontend LIFF page (this repo) | `davis-order-liff` | `git push` → GitHub Pages build |
-| Backend (Apps Script) | `davis-order-bot` (`~/davis-order-bot`) | `clasp push` → `clasp deploy` |
+| Backend (Apps Script) | `davis-order-bot` (`~/WORKAI/davis-order-bot`) | `clasp push` → `clasp deploy` |
 
 ## `git push` is not a release
 
@@ -23,7 +23,9 @@ The backend half is worse: `clasp push` alone changes **nothing** users can see,
 
 Every call is a POST to the Apps Script web app, whose production URL is **hardcoded in this file** (`AKfycbw67bRdK_Ff-…`, around line 202). Requests carry a LIFF ID token or access token; the backend (`order-liff-api.js`) verifies it and refuses anything it cannot attribute to a registered staff member. There is no public/unauthenticated path — the board shows room numbers and money.
 
-The board polls every 10 seconds. The poll pauses while an inline form is open, so anything that leaves `openForms` non-empty by mistake freezes the whole screen (this has happened — see the comment above `formBodyHtml`).
+**Since v28 the board is pushed, not polled.** `whoAmIViaLiff` returns a Firebase custom token (only for someone in `Staff_Registry`) plus the project id / web API key; the page signs in and `onSnapshot`s `boards/current`, which the backend publishes after every write (`firebase-bridge.js`). While that listener is live the 10 s poll is skipped. Without a token (backend not configured, unregistered person, `?group=` single-request view) the page polls exactly as before — every change here must keep both paths working. The countdown clock is anchored to `serverNow` from whoAmI, never from a snapshot (a snapshot's stamp can be minutes old on open). The last board is kept in `localStorage` (`davisBoard.v1`) so the next open paints it before LINE answers.
+
+The board polls every 10 seconds (fallback path only). The poll pauses while an inline form is open, so anything that leaves `openForms` non-empty by mistake freezes the whole screen (this has happened — see the comment above `formBodyHtml`).
 
 ## Conventions
 
