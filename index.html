@@ -1881,7 +1881,7 @@
     if (REQUEST_GROUP) return; // a single-request view needs rows of any age; that stays on the API
     if (!whoami || !whoami.firebaseToken || !whoami.firebaseProjectId || !whoami.firebaseApiKey || typeof firebase === 'undefined') return;
     try {
-      if (!firebase.apps.length) firebase.initializeApp({ projectId: whoami.firebaseProjectId, apiKey: whoami.firebaseApiKey });
+      if (!firebase.apps.length) firebase.initializeApp({ projectId: whoami.firebaseProjectId, apiKey: whoami.firebaseApiKey, authDomain: whoami.firebaseProjectId + '.firebaseapp.com' });
       firebase.auth().signInWithCustomToken(whoami.firebaseToken).then(function () {
         realtime.db = firebase.firestore();
         var parts = String(whoami.firebaseBoardDoc || 'boards/current').split('/');
