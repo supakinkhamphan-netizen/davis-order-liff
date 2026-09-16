@@ -41,40 +41,49 @@
      one product. */
   :root {
     color-scheme: dark;   /* scrollbars, and any control the browser draws itself */
-    --bg:#0B1220; --card:#161E2E; --line:#2A3446;
-    --ink:#E8EDF4;
-    --ink-2:#9AA7B8;
-    --ink-3:#D5DDE8;   /* the order items — the thing being fetched */
-    --ok:#4ADE80;
-    --warn-bg:#3A2E0B; --warn-ink:#FCD34D;
-    --hot-bg:#3A210B;  --hot-ink:#FDBA74;
-    --free-bg:#12233F; --free-ink:#93C5FD;
-    --danger:#F87171;
+    /* ORDER_TONE_ (line-core.js in the bot repo) — the same seven values as
+       every LINE card and form. The board is the one surface that can draw
+       the soft light this tone is built on, so it does: --hi/--lo are the
+       neumorphic pair, raised on cards and buttons, inset on fields and chips. */
+    --bg:#23272E; --card:#23272E; --panel:#262B33; --line:#2F353E;
+    --ink:#E8EBF0;
+    --ink-2:#9AA3B2;
+    --ink-3:#E8EBF0;   /* the order items — the thing being fetched */
+    --ok:#6FD39A;
+    --accent:#2FA39A; --accent-ink:#08201E;
+    --warn-bg:#3A3116; --warn-ink:#E3B341;
+    --hot-bg:#3D2A1C;  --hot-ink:#F0B48C;
+    --free-bg:#1F2A3F; --free-ink:#93C5FD;
+    --danger:#F08C8C;
+    --hi:rgba(255,255,255,.055); --lo:rgba(0,0,0,.55);
+    --raise:6px 6px 14px var(--lo), -4px -4px 12px var(--hi);
+    --raise-sm:3px 3px 8px var(--lo), -2px -2px 6px var(--hi);
+    --sink:inset 4px 4px 10px var(--lo), inset -3px -3px 8px var(--hi);
     --btn-h:56px; --btn-r:12px; --card-r:16px; --gap:12px; --pad:16px;
     --head-h:64px; --tabs-h:48px;
   }
   * { box-sizing: border-box; }
   body { margin:0; font-family:'IBM Plex Sans Thai',-apple-system,'Helvetica Neue',sans-serif; background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased; padding-bottom:70px; }
-  header { background:var(--ink); color:var(--card); padding:0 16px; height:var(--head-h); display:flex; align-items:center; position:sticky; top:0; z-index:6; }
+  header { background:var(--bg); color:var(--ink); padding:0 16px; height:var(--head-h); display:flex; align-items:center; position:sticky; top:0; z-index:6; box-shadow:0 6px 14px var(--lo); }
   header h1 { font-weight:800; font-size:1.2rem; margin:0; }
-  header .who { font-size:12px; color:#cfd2d6; margin-top:3px; min-height:15px; }
+  header .who { font-size:12px; color:var(--ink-2); margin-top:3px; min-height:15px; }
   header .headRow { display:flex; align-items:center; gap:12px; }
   header #avatar { width:42px; height:42px; border-radius:50%; object-fit:cover; background:#333; display:none; }
-  .nudgeBtn { margin-top:8px; width:100%; min-height:38px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--ink); font-size:13px; font-weight:600; }
+  .nudgeBtn { margin-top:8px; width:100%; min-height:38px; border:none; border-radius:10px; background:var(--card); color:var(--ink); font-size:13px; font-weight:600; box-shadow:var(--raise-sm); }
   .sumRow { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px; }
   .sumRow:last-child { border-bottom:none; }
   .sumTotal { display:flex; justify-content:space-between; padding:14px 0 0; font-weight:800; font-size:16px; }
   /* top must equal the header's real height or the tab bar slides up under it
      while scrolling — it was pinned at 56px against a ~70px header. Both now
      come from the same token. */
-  .tabs { display:flex; height:var(--tabs-h); position:sticky; top:var(--head-h); background:var(--card); z-index:5; box-shadow:0 1px 0 var(--line); }
-  .tabs button { flex:1; border:none; background:none; padding:12px; font-size:15px; font-weight:600; color:var(--ink-2); }
-  .tabs button.active { color:var(--ink); border-bottom:3px solid var(--ink); font-weight:700; }
+  .tabs { display:flex; height:var(--tabs-h); position:sticky; top:var(--head-h); background:var(--bg); z-index:5; box-shadow:0 1px 0 var(--line); }
+  .tabs button { flex:1; border:none; background:none; padding:12px; font-size:15px; font-weight:600; color:var(--ink-2); font-family:inherit; }
+  .tabs button.active { color:var(--accent); border-bottom:3px solid var(--accent); font-weight:700; }
   #list { padding:12px; max-width:520px; margin:0 auto; }
   .empty { text-align:center; padding:60px 20px; color:var(--ink-2); }
-  .card { background:var(--card); border-radius:14px; padding:16px 18px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .card { background:var(--card); border-radius:14px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--raise); }
   .card.skeleton { color:transparent; }
-  .card.skeleton * { background:#eceef1; border-radius:6px; color:transparent !important; animation:pulse 1.1s ease-in-out infinite; }
+  .card.skeleton * { background:var(--panel); border-radius:6px; color:transparent !important; animation:pulse 1.1s ease-in-out infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
   .card { padding:var(--pad); border-radius:var(--card-r); }
   .card .id { font-size:11px; letter-spacing:.06em; color:var(--ink-2); font-weight:600; }
@@ -84,15 +93,15 @@
      on the card at #777/13px, below the AA floor. */
   .card .items { font-size:15px; font-weight:500; color:var(--ink-3); margin-top:10px; white-space:pre-wrap; line-height:1.55; }
   .groupHead { font-size:14px; font-weight:700; color:var(--ink-2); margin:18px 4px 8px; display:flex; justify-content:space-between; }
-  .clock { display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600; padding:10px 12px; border-radius:10px; margin:-4px -4px 12px; line-height:1.4; }
-  .clock.calm { background:transparent; color:var(--ink-2); padding-left:0; }
+  .clock { display:flex; align-items:center; gap:6px; font-size:15px; font-weight:600; padding:10px 12px; border-radius:10px; margin:-4px -4px 12px; line-height:1.4; box-shadow:var(--sink); }
+  .clock.calm { background:transparent; color:var(--ink-2); padding-left:0; box-shadow:none; }
   .clock.warn { background:var(--warn-bg); color:var(--warn-ink); }
   .clock.hot  { background:var(--hot-bg);  color:var(--hot-ink); }
   .clock.free { background:var(--free-bg); color:var(--free-ink); }
   .rowMini { display:flex; align-items:center; gap:12px; }
   .rowMini .body { flex:1; min-width:0; }
   .rowMini .body .items { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .miniBtn { width:112px; min-height:72px; border:none; border-radius:var(--btn-r); background:var(--ok); color:#06210F; font-size:15px; font-weight:700; }
+  .miniBtn { width:112px; min-height:72px; border:none; border-radius:var(--btn-r); background:var(--accent); color:var(--accent-ink); font-size:15px; font-weight:700; box-shadow:var(--raise-sm); font-family:inherit; }
   .moreBtn { position:absolute; right:10px; bottom:10px; width:36px; height:36px; border:none; background:none; color:var(--ink-2); font-size:20px; }
   .moreMenu { margin-top:12px; border-top:1px solid var(--line); padding-top:10px; display:none; }
   .moreMenu.open { display:block; }
@@ -110,36 +119,38 @@
   .progress .track { height:6px; border-radius:3px; background:var(--line); overflow:hidden; }
   .progress .fill { height:100%; background:var(--ok); border-radius:3px; transition:width .3s; }
   .progress .label { display:flex; justify-content:space-between; margin-top:6px; font-size:11px; color:var(--ink-2); }
-  .progress .label b { color:#000; font-weight:700; }
+  .progress .label b { color:var(--ink); font-weight:700; }
   /* 56px, not 46px: one wet hand, gloves, in a hurry, and pressing the wrong
      one costs real money. */
   .actionBtn { margin-top:16px; width:100%; min-height:var(--btn-h); border:none; border-radius:var(--btn-r); font-weight:700; font-size:17px; font-family:inherit; background:var(--ink); color:var(--card); }
-  .actionBtn.green { background:var(--ok); color:#06210F; }
-  .actionBtn:active { transform:scale(.98); }
+  .actionBtn { background:var(--accent); color:var(--accent-ink); box-shadow:var(--raise-sm); }
+  .actionBtn.green { background:var(--accent); color:var(--accent-ink); }
+  .actionBtn:active { transform:none; box-shadow:var(--sink); }
   /* Never fade a working button: in a dark room a faded button reads as "it
      didn't register" and the runner presses again. Go darker instead. */
-  .actionBtn.busy { background:#374151; color:#fff; }
+  .actionBtn.busy { background:var(--panel); color:var(--ink); box-shadow:var(--sink); }
   .actionBtn.ok { background:var(--ok); color:#06210F; }
-  .actionBtn.fail { background:var(--danger); color:#fff; }
+  .actionBtn.fail { background:var(--danger); color:#2A0A0A; }
   .actionBtn[disabled]:not(.busy):not(.ok):not(.fail) { background:var(--line); color:var(--ink-2); }
   .miniform { margin-top:12px; border-top:1px solid var(--line); padding-top:12px; display:none; }
   .miniform.open { display:block; }
   /* No uppercase (does nothing in Thai) and no letter-spacing (it pushes the
      vowels and tone marks away from the consonant they belong to). */
   .miniform label { display:block; font-size:15px; color:var(--ink-2); font-weight:600; margin-top:12px; }
-  .miniform input, .miniform select { width:100%; min-height:44px; padding:8px 10px; margin-top:4px; border:1px solid var(--line); border-radius:8px; font-size:16px; }
+  .miniform input, .miniform select { width:100%; min-height:44px; padding:8px 10px; margin-top:4px; border:none; border-radius:10px; font-size:16px; background:var(--bg); color:var(--ink); box-shadow:var(--sink); font-family:inherit; }
+  .miniform input:focus, .miniform select:focus { outline:none; box-shadow:var(--sink), 0 0 0 2px rgba(47,163,154,.6); }
   .miniform .err { color:var(--danger); font-size:15px; font-weight:600; margin-top:10px; min-height:18px; line-height:1.5; }
   #boot { text-align:center; padding:80px 20px; color:var(--ink-2); }
   #lastUpdated { text-align:center; font-size:12px; color:var(--ink-2); padding:10px; }
-  #toast { position:fixed; left:16px; right:16px; top:calc(var(--head-h) + var(--tabs-h) + 8px); background:#2A3446; color:var(--ink); border:1px solid var(--line); padding:12px 16px; border-radius:10px; font-size:14px; text-align:center; transform:translateY(120%); transition:transform .25s; z-index:20; }
+  #toast { position:fixed; left:16px; right:16px; top:calc(var(--head-h) + var(--tabs-h) + 8px); background:var(--panel); color:var(--ink); border:none; box-shadow:var(--raise); padding:12px 16px; border-radius:10px; font-size:14px; text-align:center; transform:translateY(120%); transition:transform .25s; z-index:20; }
   /* Hidden must mean HIDDEN. translateY(-140%) is 140% of the toast's own
      height — about 50px — which parked it right on top of the tab bar instead
      of off-screen. Opacity + visibility cannot be off by a few pixels. */
   #toast { opacity:0; visibility:hidden; transform:translateY(-12px); transition:opacity .2s, transform .2s, visibility .2s; }
   #toast.show { opacity:1; visibility:visible; transform:translateY(0); }
   #toast.err { background:var(--danger); }
-  #scopeBanner { max-width:520px; margin:12px auto 0; padding:10px 14px; background:#FEF3C7; color:#92400E; border-radius:10px; font-size:13px; font-weight:600; display:flex; justify-content:space-between; align-items:center; gap:10px; }
-  #scopeBanner a { color:#92400E; font-weight:800; white-space:nowrap; }
+  #scopeBanner { max-width:520px; margin:12px auto 0; padding:10px 14px; background:var(--warn-bg); color:var(--warn-ink); border-radius:10px; font-size:13px; font-weight:600; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  #scopeBanner a { color:var(--warn-ink); font-weight:800; white-space:nowrap; }
   /* "ทั้งหมด"/"สรุปเดือนนี้" mix every shop together — this is the one control
      that lets a runner or a manager pull one shop back out of that mix. Hidden
      entirely when only one shop is in play, so it never costs a single-shop
@@ -147,30 +158,30 @@
   #shopFilterBar { display:none; max-width:520px; margin:10px auto 0; }
   .shopChipRow { display:flex; gap:8px; overflow-x:auto; padding:0 12px 2px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
   .shopChipRow::-webkit-scrollbar { display:none; }
-  .shopChip { flex:0 0 auto; border:1px solid var(--line); background:var(--card); color:var(--ink-2); font-family:inherit; font-size:14px; font-weight:600; padding:8px 14px; border-radius:999px; white-space:nowrap; }
+  .shopChip { flex:0 0 auto; border:none; box-shadow:var(--raise-sm); background:var(--card); color:var(--ink-2); font-family:inherit; font-size:14px; font-weight:600; padding:8px 14px; border-radius:999px; white-space:nowrap; }
   /* Multi-select needs a much louder "on": with several chips selected at once,
      a one-shade difference makes the set of picks unreadable at a glance. */
-  .shopChip.active { background:var(--ink); color:var(--card); border-color:var(--ink); font-weight:800; box-shadow:0 0 0 2px var(--bg), 0 0 0 4px var(--ink); }
+  .shopChip.active { background:var(--card); color:var(--accent); font-weight:800; box-shadow:var(--sink), 0 0 0 2px rgba(47,163,154,.55); }
   .shopChipRow.zoneRow { margin-bottom:8px; }
   .zoneChip { text-transform:none; letter-spacing:0; }
   .zoneChip.active { box-shadow:none; }
-  .liveDot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#16a34a; margin-right:6px; vertical-align:middle; animation:livePulse 2s ease-in-out infinite; }
+  .liveDot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--ok); margin-right:6px; vertical-align:middle; animation:livePulse 2s ease-in-out infinite; }
   @keyframes livePulse { 0%,100% { opacity:1 } 50% { opacity:.25 } }
-  .unknownBox { max-width:520px; margin:10px auto 0; padding:14px 16px; background:#fef3c7; color:#92400e; border-radius:12px; font-size:14px; line-height:1.7; }
-  .unknownBox code { display:block; margin:8px 0; padding:10px; background:#fff; color:#111; border-radius:8px; font-size:13px; word-break:break-all; }
-  .unknownBox button { width:100%; min-height:44px; border:none; border-radius:8px; background:#92400e; color:#fff; font-family:inherit; font-size:14px; font-weight:700; }
+  .unknownBox { max-width:520px; margin:10px auto 0; padding:14px 16px; background:var(--warn-bg); color:var(--warn-ink); border-radius:12px; font-size:14px; line-height:1.7; box-shadow:var(--raise-sm); }
+  .unknownBox code { display:block; margin:8px 0; padding:10px; background:var(--bg); color:var(--ink); border-radius:8px; font-size:13px; word-break:break-all; box-shadow:var(--sink); }
+  .unknownBox button { width:100%; min-height:44px; border:none; border-radius:8px; background:var(--accent); color:var(--accent-ink); font-family:inherit; font-size:14px; font-weight:700; }
   /* Sales filter + stat strip (สรุปเดือนนี้ tab, managers only). The stat
      grid is 2x2 rather than a 4-across row: four numbers side by side on a
      360px phone shrink to a size nobody reads at arm's length in a dark shop. */
   .rangeChipRow { display:flex; gap:8px; overflow-x:auto; padding:0 0 2px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
   .rangeChipRow::-webkit-scrollbar { display:none; }
-  .rangeChip { flex:0 0 auto; border:1px solid var(--line); background:var(--card); color:var(--ink-2); font-family:inherit; font-size:14px; font-weight:600; padding:8px 14px; border-radius:999px; white-space:nowrap; }
-  .rangeChip.active { background:var(--ink); color:var(--card); border-color:var(--ink); }
+  .rangeChip { flex:0 0 auto; border:none; box-shadow:var(--raise-sm); background:var(--card); color:var(--ink-2); font-family:inherit; font-size:14px; font-weight:600; padding:8px 14px; border-radius:999px; white-space:nowrap; }
+  .rangeChip.active { background:var(--card); color:var(--accent); box-shadow:var(--sink), 0 0 0 2px rgba(47,163,154,.55); }
   .customRangeRow { display:none; gap:8px; margin-top:10px; }
   .customRangeRow.open { display:flex; }
   .customRangeRow input { flex:1; min-width:0; min-height:44px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
   .statGrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
-  .statBox { background:var(--bg); border-radius:10px; padding:12px 14px; }
+  .statBox { background:var(--bg); border-radius:10px; padding:12px 14px; box-shadow:var(--sink); }
   .statBox .k { font-size:12px; color:var(--ink-2); font-weight:600; }
   .statBox .v { font-size:20px; font-weight:800; margin-top:4px; line-height:1.2; }
   .statBox .v small { font-size:13px; font-weight:600; color:var(--ink-2); }
@@ -180,8 +191,8 @@
   .appealTop { display:flex; justify-content:space-between; gap:10px; font-size:14px; font-weight:600; }
   .appealMeta { font-size:12px; color:var(--ink-2); margin-top:3px; line-height:1.6; }
   .appealActions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
-  .appealBtn { flex:1 1 30%; min-height:40px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); font-family:inherit; font-size:13px; font-weight:700; }
-  .appealBtn.warn { border-color:#fca5a5; color:#b91c1c; }
+  .appealBtn { flex:1 1 30%; min-height:40px; border-radius:8px; border:none; box-shadow:var(--raise-sm); background:var(--card); color:var(--ink); font-family:inherit; font-size:13px; font-weight:700; }
+  .appealBtn.warn { color:var(--danger); }
   .appealBtn[disabled] { opacity:.5; }
   .reassignRow { display:none; gap:8px; margin-top:8px; }
   .reassignRow.open { display:flex; }
@@ -197,20 +208,20 @@
   .shopRowTop { display:flex; justify-content:space-between; gap:10px; font-size:14px; align-items:baseline; }
   .shopRowTop b { white-space:nowrap; }
   .shopBarTrack { height:6px; border-radius:999px; background:var(--line); margin-top:6px; overflow:hidden; }
-  .shopBarFill { height:100%; border-radius:999px; background:var(--ink); }
+  .shopBarFill { height:100%; border-radius:999px; background:var(--accent); }
   /* Bottom sheet for the cancel reason — thumb-reachable, big targets, and
      it dims the board behind it so there is one decision on screen. */
   .sheetWrap { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:flex-end; justify-content:center; z-index:50; }
-  .sheet { width:100%; max-width:520px; background:var(--card); border-radius:18px 18px 0 0; padding:20px 16px calc(20px + env(safe-area-inset-bottom)); }
+  .sheet { width:100%; max-width:520px; background:var(--card); border-radius:18px 18px 0 0; padding:20px 16px calc(20px + env(safe-area-inset-bottom)); box-shadow:0 -10px 30px var(--lo); }
   .sheetTitle { font-size:18px; font-weight:800; }
   .sheetHint { font-size:13px; color:var(--ink-2); margin:4px 0 12px; }
   .sheetBtn { display:block; width:100%; min-height:52px; margin-top:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:12px; font-family:inherit; font-size:16px; font-weight:700; }
   .sheetBtn.cancel { color:var(--ink-2); font-weight:600; border-style:dashed; }
   .sheetBtn[disabled] { opacity:.5; }
   .promise { margin-top:8px; padding:7px 10px; border-radius:8px; font-size:13px; font-weight:700; }
-  .promise.ok { background:#dcfce7; color:#166534; }
-  .promise.soon { background:#fef3c7; color:#92400e; }
-  .promise.late { background:#fee2e2; color:#991b1b; }
+  .promise.ok { background:#1E3A2C; color:var(--ok); }
+  .promise.soon { background:var(--warn-bg); color:var(--warn-ink); }
+  .promise.late { background:#3D2222; color:var(--danger); }
   .mgrPeriodRow { display:flex; gap:8px; margin-top:10px; }
   .mgrMonthInput { margin-top:10px; width:100%; min-height:44px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
 </style>
@@ -261,7 +272,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v31';
+  var BUILD = 'v32';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -762,7 +773,7 @@
     box.innerHTML = '<b>⚠ No cards in the group this month</b><br>' +
       'LINE\'s monthly message quota is used up, so the bot cannot post cards. ' +
       'Everything still works from this board — take orders, mark food ready and deliver here as usual.' +
-      '<div style="margin-top:6px;color:#7c2d12">โควตาข้อความ LINE เดือนนี้หมด การ์ดจะไม่เข้ากลุ่ม — ทำงานผ่านหน้านี้ได้ตามปกติ</div>';
+      '<div style="margin-top:6px;color:var(--warn-ink)">โควตาข้อความ LINE เดือนนี้หมด การ์ดจะไม่เข้ากลุ่ม — ทำงานผ่านหน้านี้ได้ตามปกติ</div>';
     box.style.display = 'block';
   }
 
@@ -854,7 +865,7 @@
       // Phase 20: one tap, nothing to type — and the backend refuses "food
       // ready" until it has happened, so the second button waits behind it.
       return '<button class="actionBtn" id="bill-' + row.orderId + '" onclick="doBillReceived(\'' + row.orderId + '\')" ' +
-        'style="background:#E8EBDD;color:#14231B">🧾 Bill received — the POS ticket is here</button>' +
+        'style="background:var(--panel);color:var(--ink);box-shadow:var(--raise-sm)">🧾 Bill received — the POS ticket is here</button>' +
         '<div style="font-size:13px;color:var(--ink-2);margin-top:6px">Your kitchen clock starts at this tap. Food ready comes after.</div>';
     }
     if (row.stage === 0 && row.is24) {
@@ -1029,7 +1040,7 @@
           (ot.sell.pct == null ? '—' : ot.sell.pct + '%') + '</div></div>' +
         '</div>' +
         (sales.staleCount
-          ? '<div style="margin-top:12px;padding:10px 12px;background:#fef2f2;color:#991b1b;border-radius:8px;font-size:13px;font-weight:700">' +
+          ? '<div style="margin-top:12px;padding:10px 12px;background:#3D2222;color:var(--danger);border-radius:8px;font-size:13px;font-weight:700">' +
             '🧹 ค้างข้ามรอบ ' + sales.staleCount + ' ออเดอร์ — ต้องไปเคลียร์</div>'
           : '') +
         // Phase 8 §7/§8.1 — two zone breakdowns, and the labels have to say
@@ -1407,7 +1418,7 @@
         // two deliberate taps to open, and asks for a reason before it does
         // anything (the backend refuses a cancellation without one).
         (r.stage < 2 && !r.isCancelled
-          ? '<button style="color:#b91c1c;font-weight:700" onclick="askCancel(\'' + r.orderId + '\')">🚫 Cancel order</button>'
+          ? '<button style="color:var(--danger);font-weight:700" onclick="askCancel(\'' + r.orderId + '\')">🚫 Cancel order</button>'
           : '') +
       '</div>' +
       '</div>';
