@@ -277,7 +277,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v33';
+  var BUILD = 'v34';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -1760,6 +1760,7 @@
       if (!rows || rows.error) { showOffline(rows && rows.error); return; }
       noteServerNow(rows);
       noteArrivals(rows);
+      applyFloor(rows);
       allRows = rows;
       // Re-rendering identical data throws away every open form's typed
       // amount and re-decodes the same HTML — repaint only on a real change.
@@ -1827,7 +1828,43 @@
    * 2. Then confirm against the server with `fresh: true`, bypassing the
    *    8-second shared cache, so the optimistic guess is replaced by truth.
    */
+  /**
+   * v34 — what THIS phone already saved outlives the next few payloads.
+   *
+   * ORD_20260918_01 (2026-09-18 11:57): Food ready saved in 6 s, then a
+   * Firestore snapshot published BEFORE the save (11:56:40) repainted the row
+   * at stage 0, the button came back, and the same person pressed it twice
+   * more into "already marked ready" / "already delivered". applyLocalStage
+   * raised the row once; nothing stopped the next payload lowering it again.
+   * The floor is applied to every payload for three minutes, or until the
+   * server's own row has caught up — whichever comes first.
+   */
+  var localFloor = {}; // orderId -> { stage, billAt, until }
+  function rememberFloor(orderId, patch) {
+    localFloor[orderId] = Object.assign({}, localFloor[orderId] || {}, patch, { until: Date.now() + 180000 });
+  }
+  function applyFloor(rows) {
+    var now = Date.now();
+    Object.keys(localFloor).forEach(function (id) {
+      var f = localFloor[id];
+      if (f.until < now) { delete localFloor[id]; return; }
+      var row = (rows || []).filter(function (r) { return r && r.orderId === id; })[0];
+      if (!row) return;
+      var caughtUp = (f.stage == null || row.stage >= f.stage) && (!f.billAt || !!row.billAt);
+      if (caughtUp) { delete localFloor[id]; return; }
+      if (f.stage != null && row.stage < f.stage) row.stage = f.stage;
+      if (f.billAt && !row.billAt) { row.billAt = f.billAt; row.kitchenStartAt = ''; }
+    });
+    return rows;
+  }
+  /** True when this phone already saved this step — the press is a repeat, not a retry. */
+  function alreadySavedHere(orderId, stage) {
+    var f = localFloor[orderId];
+    return !!(f && f.until >= Date.now() && f.stage != null && f.stage >= stage);
+  }
+
   function applyLocalStage(orderId, stage) {
+    rememberFloor(orderId, { stage: stage });
     boardGeneration++; // every poll already in flight is now stale
     if (!allRows) return;
     allRows.forEach(function (r) {
@@ -1847,6 +1884,7 @@
       if (!rows || rows.error) return;
       noteServerNow(rows);
       clearOffline();
+      applyFloor(rows);
       allRows = rows;
       lastPayload = JSON.stringify(rows);
       render();
@@ -1972,6 +2010,7 @@
   function applyRealtimeRows(rows, publishedAt) {
     pendingRealtime = null;
     noteArrivals(rows);
+    applyFloor(rows);
     allRows = rows;
     clearOffline();
     var payload = JSON.stringify(rows);
@@ -2018,6 +2057,7 @@
         // Paint the tap locally so the Food ready button appears at once;
         // the next poll confirms it from the server.
         (allRows || []).forEach(function (x) { if (x.orderId === orderId) { x.billAt = 'now'; x.kitchenStartAt = ''; } });
+        rememberFloor(orderId, { billAt: 'now' });
         lastPayload = ''; boardGeneration++; render(); forceRefresh();
       });
     });
@@ -2197,6 +2237,7 @@
         : '⚠ No photo of the bill yet — the month cannot be settled without it';
       return;
     }
+    if (alreadySavedHere(orderId, nextStage)) { toast('Already saved ' + orderId.replace(/^ORD_\d{8}_/, '#') + ' — the board is catching up, no need to press again'); openForms = {}; render(); return; }
     submitBtn.disabled = true;
     errEl.style.color = 'var(--ink-2)';
     errEl.textContent = 'Saving…';
