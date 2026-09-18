@@ -277,7 +277,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v34';
+  var BUILD = 'v35';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -405,6 +405,22 @@
   // Still exactly one filter mechanism — Phase 3 §E2 — everything that filters
   // by shop reads this array, and the rows in the sales panel toggle it too.
   var shopFilters = [];
+  // { shop: zone } for every selling shop, from whoAmI (v35). Until it
+  // arrives, the last one this phone saw; until then, the rows.
+  var shopDirectory = null;
+  try { shopDirectory = JSON.parse(localStorage.getItem('davis_shop_dir') || 'null'); } catch (e) { shopDirectory = null; }
+  /** Chip list: the directory's shops (in its order) plus any seller on the board it does not know. */
+  function chipShops(rows) {
+    var fromRows = distinctShops(rows);
+    if (!shopDirectory) return fromRows;
+    var out = Object.keys(shopDirectory);
+    fromRows.forEach(function (s) { if (out.indexOf(s) < 0) out.push(s); });
+    return out;
+  }
+  function chipZoneOf(rows) {
+    var byRows = zoneOfShopFromRows(rows);
+    return function (name) { return (shopDirectory && shopDirectory[name]) || byRows(name); };
+  }
   // One zone at a time, and it narrows which shop chips exist (§3.2).
   var zoneFilter = '';
   var lastSalesAt = '';
@@ -572,6 +588,13 @@
    *  reports it (order-sla.js). Saying so out loud is the whole point: fear of
    *  being charged is why people hesitate on this button too. */
   function kitchenClock(r) {
+    // Fairway / Mandrake have no kitchen step (rule 24): nothing to tap before
+    // "Mark delivered + bill", so a "cooking … target 30 FRI" line is wrong
+    // there — the door-to-door promise below the title is their only clock.
+    if (!r.is24) {
+      var since = secondsSince(r.orderedAt);
+      return { tier: 'calm', sec: since, text: '🛎 ordered ' + humanMins(since) + ' ago · no kitchen step — tap Mark delivered + bill when it reaches the guest' };
+    }
     // Phase 20: the server decides where the kitchen's clock starts (the
     // "Bill received" tap, else keying) and how long it has for THIS order —
     // busy days and big bills get more. The page only counts.
@@ -1486,7 +1509,7 @@
 
     // Chip list reflects THIS tab's shops (pre-filter), so switching back to
     // "ทุกร้าน" is always one tap away even after picking one.
-    renderShopFilterBar(distinctShops(tabRows), zoneOfShopFromRows(tabRows));
+    renderShopFilterBar(chipShops(tabRows), chipZoneOf(tabRows));
     var rows = tabRows.filter(function (r) { return shopMatches(r.seller) && zoneMatches(r); });
 
     if (rows.length === 0) {
@@ -1633,6 +1656,10 @@
     allRows.forEach(function (r) {
       var el = document.getElementById('clk-' + r.orderId);
       if (!el) return;
+      // A finished row keeps its "✅ Delivered 11:57" line: the tick used to
+      // overwrite it with "cooking 327 min · past the kitchen target" one
+      // second after every repaint (owner's screenshot, 2026-09-18 17:48).
+      if (r.stage >= STAGE_DONE || r.isCancelled) return;
       var c = clockFor(r);
       if (el.textContent !== c.text) el.textContent = c.text;
       if (el.className !== 'clock ' + c.tier) el.className = 'clock ' + c.tier;
@@ -2246,6 +2273,10 @@
     if (!isKitchen) { phase1.amount = amount; phase1.payment = payment; }
     var t0 = Date.now();
     callApi(fn, phase1).then(function (r) {
+      // A Save the server finished in 6.6 s took ~27 s to reach the phone
+      // (video, 2026-09-18 17:56). Only the phone can see that gap.
+      var e2e = Date.now() - t0;
+      if (e2e > 8000 && r && r._ms) clientLog('slow save ' + fn + ' e2e ' + Math.round(e2e / 1000) + 's, server ' + Math.round(r._ms / 1000) + 's');
       errEl.style.color = '';
       submitBtn.disabled = false;
       if (!r || !r.ok) { errEl.textContent = (r && r.error) || 'Something went wrong'; return; }
@@ -2409,6 +2440,13 @@
     callApi('whoAmIViaLiff', { idToken: idToken, accessToken: accessToken, clientMs: Math.round(performance.now()) }).then(function (whoami) {
       if (!whoami || !whoami.userId) { document.getElementById('whoLine').textContent = 'Could not confirm who you are'; return; }
       me = whoami;
+      // Every selling shop, so the chips list LULU / BESO / NOT IN BANGKOK on a
+      // day nobody has ordered from them yet (Chef Earth, 2026-09-18).
+      if (whoami.shopZones && Object.keys(whoami.shopZones).length) {
+        shopDirectory = whoami.shopZones;
+        try { localStorage.setItem('davis_shop_dir', JSON.stringify(shopDirectory)); } catch (e) {}
+        lastPayload = ''; render();
+      }
       // The clock anchor comes from here (a fresh request), never from a board snapshot.
       if (whoami.serverNow) noteServerNow([{ serverNow: whoami.serverNow }]);
       startRealtime(whoami);
