@@ -277,7 +277,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v35';
+  var BUILD = 'v36';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -1901,6 +1901,11 @@
     render();
   }
 
+  /** After a write the server answered without publishing: ask it to push the board to everyone now. */
+  function publishBoardAfterWrite() {
+    try { callApi('publishBoardViaLiff', { idToken: idToken, accessToken: accessToken }).catch(function () {}); } catch (e) {}
+  }
+
   function forceRefresh() {
     lastPayload = '';
     boardGeneration++;
@@ -2086,6 +2091,7 @@
         (allRows || []).forEach(function (x) { if (x.orderId === orderId) { x.billAt = 'now'; x.kitchenStartAt = ''; } });
         rememberFloor(orderId, { billAt: 'now' });
         lastPayload = ''; boardGeneration++; render(); forceRefresh();
+        publishBoardAfterWrite();
       });
     });
   }
@@ -2284,6 +2290,10 @@
       openForms = {};
       applyLocalStage(orderId, nextStage);
       forceRefresh();
+      // v36: the stamp answered without publishing (server rule 38) — this
+      // call is what moves every other phone. Fire-and-forget; the 5-minute
+      // sweep covers a phone that dies here.
+      publishBoardAfterWrite();
       // Phase 2, off the button: shrink, then upload with retries.
       shrinkAll(files.concat(foodFiles), function (allUrls) {
         var dataUrls = allUrls.slice(0, files.length).filter(Boolean);
