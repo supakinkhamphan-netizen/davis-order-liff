@@ -196,7 +196,11 @@
   .appealBtn[disabled] { opacity:.5; }
   .reassignRow { display:none; gap:8px; margin-top:8px; }
   .reassignRow.open { display:flex; }
-  .reassignRow input { flex:1; min-width:0; min-height:40px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
+  #uploadStrip { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 30; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; background: var(--panel); box-shadow: var(--raise-sm); font-size: 13px; }
+  #uploadStrip .upl { color: var(--ink); } #uploadStrip .upl.bad { color: var(--bad); }
+  #uploadStrip .dim { color: var(--ink-2); }
+  #uploadStrip button { margin-left: 6px; padding: 4px 10px; border-radius: 8px; border: 0; background: var(--accent); color: var(--accent-ink, #08201E); font-weight: 700; font-size: 12px; }
+  .reassignRow select, .reassignRow input { flex:1; min-width:0; min-height:40px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
   .zoneRow { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line); font-size:14px; }
   .zoneRow:last-child { border-bottom:none; }
   /* Per-shop takings. A bar against the best-selling shop is read in a glance;
@@ -254,6 +258,7 @@
   <div id="offlineBar"><span id="offlineText"></span><button onclick="forceRefresh()">Try again</button></div>
   <div id="scopeBanner" style="display:none"></div>
   <div id="learnBar"><span id="learnText"></span><button onclick="hideLearnBar()">Hide</button></div>
+  <div id="uploadStrip" hidden></div>
   <div id="quotaBox" class="unknownBox" style="display:none"></div>
   <div id="unknownBox" class="unknownBox" style="display:none"></div>
   <div id="shopFilterBar"></div>
@@ -272,7 +277,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v32';
+  var BUILD = 'v33';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -1273,7 +1278,12 @@
             '<button class="appealBtn"' + d + ' data-act="uphold"' + (busy ? ' disabled' : '') + '>ยืนยันตามเดิม</button>' +
           '</div>' +
           '<div class="reassignRow" id="reassign-' + escAttr(key) + '">' +
-            '<input type="text" placeholder="ชื่อคนที่ถูกหักแทน" data-reassign-name="' + escAttr(key) + '" />' +
+            '<select data-reassign-pick="' + escAttr(key) + '">' +
+              '<option value="">— เลือกคน —</option>' +
+              (a.candidates || []).map(function (c) { return '<option value="' + escAttr(c.lineId || '') + '" data-name="' + escAttr(c.name) + '">' + esc(c.name) + '</option>'; }).join('') +
+              '<option value="__other">คนอื่น (พิมพ์ชื่อ)…</option>' +
+            '</select>' +
+            '<input type="text" placeholder="ชื่อคนที่ถูกหักแทน" data-reassign-name="' + escAttr(key) + '" style="display:none" />' +
             '<button class="appealBtn"' + d + ' data-act="reassign"' + (busy ? ' disabled' : '') + '>บันทึก</button>' +
           '</div>' +
           '</div>';
@@ -1304,7 +1314,11 @@
     var act = btn.getAttribute('data-act');
     if (act === 'reassign-open') {
       var row = document.getElementById('reassign-' + key);
-      if (row) row.classList.toggle('open');
+      if (row) {
+        row.classList.toggle('open');
+        var sel = row.querySelector('select'), free = row.querySelector('input[type=text]');
+        if (sel && free && !sel._wired) { sel._wired = true; sel.addEventListener('change', function () { free.style.display = sel.value === '__other' ? '' : 'none'; if (sel.value === '__other') free.focus(); }); }
+      }
       return;
     }
     var parts = key.split('|');
@@ -1313,10 +1327,14 @@
     payload.leg = parts[1];
     payload.decision = act;
     if (act === 'reassign') {
+      var pick = document.querySelector('[data-reassign-pick="' + key.replace(/"/g, '') + '"]');
       var input = document.querySelector('[data-reassign-name="' + key.replace(/"/g, '') + '"]');
-      var name = input ? input.value.trim() : '';
-      if (!name) { toast('ใส่ชื่อคนที่จะถูกหักแทนก่อน', true); return; }
+      var name = '', lineId = '';
+      if (pick && pick.value && pick.value !== '__other') { lineId = pick.value; name = pick.options[pick.selectedIndex].getAttribute('data-name') || ''; }
+      else name = input ? input.value.trim() : '';
+      if (!name) { toast('เลือกหรือใส่ชื่อคนที่จะถูกหักแทนก่อน', true); return; }
       payload.toName = name;
+      payload.toLineId = lineId;
     }
     appealBusy = key;
     renderManager();
@@ -2100,6 +2118,62 @@
   // than left unused — a spare one-tap close is exactly the thing that gets
   // wired back to a button later.
 
+  // ---- Two-phase save (owner, 2026-09-18: "Save takes 10–20 s") ----
+  //
+  // Phase 1 sends the facts (time, amount, payment, who) with no photo and
+  // answers in ~2 s: the button unlocks, the card moves, the runner walks
+  // away. Phase 2 shrinks and uploads the photos in the background with
+  // retries, and a strip at the top says what is still on its way. The
+  // server sends the Delivered card when the handover photo lands (or from
+  // its 5-minute sweep if it never does), so nothing is lost by splitting.
+  var pendingUploads = {}; // orderId -> {label, attempt, status, retry}
+  function renderUploadStrip() {
+    var el = document.getElementById('uploadStrip');
+    if (!el) return;
+    var ids = Object.keys(pendingUploads);
+    if (!ids.length) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    el.innerHTML = ids.map(function (id) {
+      var u = pendingUploads[id];
+      var short = id.replace(/^ORD_\d{8}_/, '#');
+      if (u.status === 'failed') {
+        return '<div class="upl bad">📷 ' + short + ' — photo NOT sent after ' + u.attempt + ' tries. <button data-upl-retry="' + id + '">Retry</button> <span class="dim">Keep this page open.</span></div>';
+      }
+      return '<div class="upl">📷 Sending ' + u.label + ' for ' + short + '… ' + Math.floor((Date.now() - u.startedAt) / 1000) + ' s' + (u.attempt > 1 ? ' (try ' + u.attempt + ')' : '') + '</div>';
+    }).join('');
+  }
+  setInterval(function () { if (Object.keys(pendingUploads).length) renderUploadStrip(); }, 1000);
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('[data-upl-retry]');
+    if (!b) return;
+    var u = pendingUploads[b.getAttribute('data-upl-retry')];
+    if (u && u.retry) u.retry();
+  });
+  window.addEventListener('beforeunload', function (e) {
+    var busy = Object.keys(pendingUploads).filter(function (id) { return pendingUploads[id].status !== 'failed'; });
+    if (!busy.length) return;
+    e.preventDefault(); e.returnValue = 'A photo is still uploading';
+    return e.returnValue;
+  });
+
+  function uploadInBackground(orderId, fn, payloadBase, label) {
+    var u = pendingUploads[orderId] = { label: label, attempt: 0, status: 'sending', startedAt: Date.now() };
+    function go() {
+      u.attempt++; u.status = 'sending'; u.startedAt = Date.now(); renderUploadStrip();
+      callApi(fn, payloadBase).then(function (r) {
+        if (!r || !r.ok) throw new Error((r && r.error) || 'upload failed');
+        delete pendingUploads[orderId]; renderUploadStrip();
+        toast('📷 Photo sent for ' + orderId.replace(/^ORD_\d{8}_/, '#'));
+        forceRefresh();
+      }).catch(function () {
+        if (u.attempt < 3) { setTimeout(go, 3000 * u.attempt); return; }
+        u.status = 'failed'; renderUploadStrip();
+      });
+    }
+    u.retry = function () { u.attempt = 0; go(); };
+    go();
+  }
+
   function submitWithPhoto(orderId, fn, nextStage, kind) {
     var isKitchen = kind === 'kitchen';
     var amountEl = document.getElementById('amt-' + orderId);
@@ -2114,8 +2188,8 @@
     var submitBtn = document.getElementById('submit-' + orderId);
     errEl.textContent = '';
     if (!isKitchen && !amount) { errEl.textContent = '⚠ Enter the amount paid'; return; }
-    // One message per missing photo, naming it — the runner has to know which
-    // one to go and take.
+    // The photos are still required before Save — nobody may skip them —
+    // they just do not hold the button any more.
     if (!isKitchen && !foodFiles.length) { errEl.textContent = '⚠ No photo of the food yet'; return; }
     if (!files.length) {
       errEl.textContent = isKitchen
@@ -2124,81 +2198,50 @@
       return;
     }
     submitBtn.disabled = true;
-    errEl.textContent = 'Preparing photos...';
-    shrinkAll(files.concat(foodFiles), function (allUrls) {
-      // shrinkAll keeps the order it was given: bills first, then the single
-      // handover photo appended above.
-      var dataUrls = allUrls.slice(0, files.length);
-      var foodUrls = allUrls.slice(files.length);
-      // shrinkPhoto falls back to the ORIGINAL file when canvas fails (out of
-      // memory on an older phone with a 12MP photo). A 4MB original becomes
-      // ~5.5MB of base64 over hotel wifi and simply times out, and the runner
-      // only ever saw "ส่งไม่สำเร็จ" with no idea why. Refuse it with a
-      // reason they can act on instead.
-      var tooBig = dataUrls.filter(function (u) { return u && u.length > 3000000; });
-      if (tooBig.length) {
-        submitBtn.disabled = false;
-        errEl.textContent = '⚠ Photo too big — retake it showing just the bill, not the table';
-        return;
-      }
-      // 90 seconds of a static 'กำลังส่ง...' is why bills go missing: at about
-      // 15 seconds of nothing moving, people close the app, the upload aborts,
-      // and the whole thing starts over. A number that ticks is the proof it
-      // is still alive.
-      var startedAt = Date.now();
+    errEl.style.color = 'var(--ink-2)';
+    errEl.textContent = 'Saving…';
+    var base = { idToken: idToken, accessToken: accessToken, liffSource: 'order', ticketId: orderId };
+    var phase1 = Object.assign({ stampOnly: true }, base);
+    if (!isKitchen) { phase1.amount = amount; phase1.payment = payment; }
+    var t0 = Date.now();
+    callApi(fn, phase1).then(function (r) {
+      errEl.style.color = '';
+      submitBtn.disabled = false;
+      if (!r || !r.ok) { errEl.textContent = (r && r.error) || 'Something went wrong'; return; }
+      toast('✅ Saved ' + orderId.replace(/^ORD_\d{8}_/, '#') + ' in ' + Math.round((Date.now() - t0) / 1000) + ' s — photo sending in the background');
+      openForms = {};
+      applyLocalStage(orderId, nextStage);
+      forceRefresh();
+      // Phase 2, off the button: shrink, then upload with retries.
+      shrinkAll(files.concat(foodFiles), function (allUrls) {
+        var dataUrls = allUrls.slice(0, files.length).filter(Boolean);
+        var foodUrls = allUrls.slice(files.length).filter(Boolean);
+        var tooBig = dataUrls.concat(foodUrls).filter(function (u) { return u && u.length > 3000000; });
+        if (tooBig.length) { pendingUploads[orderId] = { label: 'photo', attempt: 3, status: 'failed', startedAt: Date.now(), retry: function () { toast('Retake the photo showing just the bill', true); } }; renderUploadStrip(); return; }
+        if (isKitchen) {
+          uploadInBackground(orderId, 'submitOrderFoodForm', Object.assign({ photoDataUrls: dataUrls }, base), 'food photo');
+        } else {
+          uploadInBackground(orderId, 'submitOrderFulfillPhotos', Object.assign({ billPhotoDataUrls: dataUrls, foodPhotoDataUrls: foodUrls }, base), 'food + bill photos');
+        }
+      });
+    }).catch(function () {
+      // The stamp request died — but it may have landed. Ask before making
+      // the runner press again and then reading "already delivered".
       errEl.style.color = 'var(--ink-2)';
-      var uploadTimer = setInterval(function () {
-        var sec = Math.floor((Date.now() - startedAt) / 1000);
-        errEl.innerHTML = 'Sending… ' + sec + ' sec<br>' +
-          '<span style="color:var(--warn-ink);font-weight:600">Hotel wifi is slow — this can take a minute. Close this page and the photo is lost.</span>';
-      }, 1000);
-      errEl.textContent = 'Sending… 0 sec';
-      var payload = {
-        idToken: idToken, accessToken: accessToken, liffSource: 'order', ticketId: orderId,
-      };
-      if (isKitchen) {
-        payload.photoDataUrls = dataUrls.filter(Boolean);
-      } else {
-        payload.amount = amount;
-        payload.payment = payment;
-        payload.billPhotoDataUrls = dataUrls.filter(Boolean);
-        payload.foodPhotoDataUrls = foodUrls.filter(Boolean);
-      }
-      callApi(fn, payload).then(function (r) {
-        clearInterval(uploadTimer);
+      errEl.textContent = 'Checking whether it got through…';
+      callApi('listOrderStatusRows', { idToken: idToken, accessToken: accessToken, requestGroupId: REQUEST_GROUP, fresh: true }).then(function (rows) {
+        var row = (rows || []).filter(function (x) { return x && x.orderId === orderId; })[0];
+        if (row && row.stage >= nextStage) {
+          errEl.style.color = ''; errEl.textContent = '';
+          toast('✅ Saved ' + orderId + ' — the reply was lost on the way, but it is done. Tap Save again to send the photo.');
+          openForms = {}; applyLocalStage(orderId, nextStage); forceRefresh();
+          return;
+        }
+        throw new Error('not saved');
+      }).catch(function () {
         errEl.style.color = '';
         submitBtn.disabled = false;
-        if (!r.ok) { errEl.textContent = r.error || 'Something went wrong'; return; }
-        toast('Saved ' + orderId);
-        openForms = {};
-        applyLocalStage(orderId, nextStage);
-        forceRefresh();
-      }).catch(function () {
-        clearInterval(uploadTimer);
-        // The request died — but the upload may have landed before it did.
-        // Two photos over hotel wifi can outlive the 90-second timeout, and
-        // the server writes the row before it answers. Ask, before telling
-        // someone to send it all again and then showing them "already
-        // delivered" for their trouble.
-        errEl.style.color = 'var(--ink-2)';
-        errEl.textContent = 'Checking whether it got through…';
-        callApi('listOrderStatusRows', { idToken: idToken, accessToken: accessToken, requestGroupId: REQUEST_GROUP, fresh: true }).then(function (rows) {
-          var row = (rows || []).filter(function (x) { return x && x.orderId === orderId; })[0];
-          if (row && row.stage >= nextStage) {
-            errEl.style.color = '';
-            errEl.textContent = '';
-            toast('✅ Saved ' + orderId + ' — the confirmation was lost on the way, but the order is done');
-            openForms = {};
-            applyLocalStage(orderId, nextStage);
-            forceRefresh();
-            return;
-          }
-          throw new Error('not saved');
-        }).catch(function () {
-          errEl.style.color = '';
-          submitBtn.disabled = false;
-          errEl.textContent = '⚠ Could not send. The photo is still on your phone — tap Save again, no need to retake it.';
-        });
+        errEl.textContent = '⚠ Could not save. Tap Save again — the photos are still on your phone.';
       });
     });
   }
