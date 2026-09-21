@@ -199,6 +199,8 @@
   #uploadStrip { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 30; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; background: var(--panel); box-shadow: var(--raise-sm); font-size: 13px; }
   #uploadStrip .upl { color: var(--ink); } #uploadStrip .upl.bad { color: var(--bad); }
   #uploadStrip .dim { color: var(--ink-2); }
+  .miniform .pf { font-size: 12px; color: var(--ink-2); margin-top: 4px; min-height: 14px; } .miniform .pf.ok { color: var(--ok, #2FA39A); } .miniform .pf.bad { color: var(--bad); }
+  .miniform .pf button { margin-left: 6px; padding: 3px 9px; border-radius: 8px; border: 0; background: var(--accent); color: var(--accent-ink, #08201E); font-weight: 700; font-size: 12px; }
   #uploadStrip button { margin-left: 6px; padding: 4px 10px; border-radius: 8px; border: 0; background: var(--accent); color: var(--accent-ink, #08201E); font-weight: 700; font-size: 12px; }
   .reassignRow select, .reassignRow input { flex:1; min-width:0; min-height:40px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
   .zoneRow { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--line); font-size:14px; }
@@ -277,7 +279,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v36';
+  var BUILD = 'v37';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -940,7 +942,9 @@
         // was already photographed (or already handed back) could not be attached at
         // all.
         '<label>📸 Photo of the food as delivered</label><input type="file" accept="image/*" id="food-' + orderId + '" />' +
-        '<label>🧾 Photo of the bill (more than one is fine)</label><input type="file" accept="image/*" multiple id="photo-' + orderId + '" />';
+        '<div class="pf" id="pf-food-' + orderId + '">' + photoFirstText(orderId, 'food') + '</div>' +
+        '<label>🧾 Photo of the bill (more than one is fine)</label><input type="file" accept="image/*" multiple id="photo-' + orderId + '" />' +
+        '<div class="pf" id="pf-bill-' + orderId + '">' + photoFirstText(orderId, 'bill') + '</div>';
     }
     return '<div class="miniform' + (open ? ' open' : '') + '" id="form-' + orderId + '">' +
       body +
@@ -2178,6 +2182,13 @@
     setSalesRange(chip.getAttribute('data-range'));
   });
   document.getElementById('list').addEventListener('change', function (e) {
+    var m = /^(food|photo)-(ORD_.+)$/.exec(e.target.id || '');
+    // Photo-first (v37): only the handover form has a food-<id> input; the
+    // kitchen's photo-<id> keeps the old after-the-stamp path.
+    if (m && document.getElementById('food-' + m[2])) {
+      photoFirstUpload(m[2], m[1] === 'food' ? 'food' : 'bill', Array.prototype.slice.call(e.target.files || []).slice(0, m[1] === 'food' ? 1 : 3));
+      return;
+    }
     if (e.target.id !== 'salesFrom' && e.target.id !== 'salesTo') return;
     salesFrom = document.getElementById('salesFrom').value;
     salesTo = document.getElementById('salesTo').value;
@@ -2247,6 +2258,83 @@
     go();
   }
 
+  // ---- Photo-first handover (owner, 2026-09-21) ----
+  //
+  // ORD_20260921_15/_16 closed with no picture: the two-phase Save stamped
+  // "delivered" and the photos, sent afterwards from a page that was shut,
+  // never arrived — the sweep then posted a Delivered card with no photo.
+  // Now each handover photo starts uploading the moment it is picked, while
+  // the runner is still typing the amount; Save waits only for what is still
+  // on its way, and the server refuses a handover whose row holds no photos
+  // (order-flow-a.js handoverPhotosMissing_). The kitchen form is unchanged:
+  // it has nothing else to fill in, so waiting there would be the old 10 s.
+  var photoFirst = {}; // orderId -> { food: {status, promise, files, attempt}, bill: {...} }
+  function photoFirstText(orderId, kind) {
+    var st = photoFirst[orderId] && photoFirst[orderId][kind];
+    if (!st) return '';
+    if (st.status === 'sent') return '📷 sent';
+    if (st.status === 'failed') return '⚠ not sent after ' + st.attempt + ' tries <button type="button" data-pf-retry="' + orderId + '|' + kind + '">Retry</button>';
+    return '📷 sending… ' + (st.attempt > 1 ? '(try ' + st.attempt + ')' : '');
+  }
+  function photoFirstPaint(orderId, kind) {
+    var el = document.getElementById('pf-' + kind + '-' + orderId);
+    if (!el) return;
+    var st = photoFirst[orderId] && photoFirst[orderId][kind];
+    el.className = 'pf' + (st && st.status === 'sent' ? ' ok' : st && st.status === 'failed' ? ' bad' : '');
+    el.innerHTML = photoFirstText(orderId, kind);
+  }
+  function photoFirstUpload(orderId, kind, files) {
+    if (!files.length) return;
+    var slot = photoFirst[orderId] = photoFirst[orderId] || {};
+    var st = slot[kind] = { status: 'sending', attempt: 0, files: files, promise: null };
+    st.promise = new Promise(function (resolve) {
+      shrinkAll(files, function (urls) {
+        var dataUrls = urls.filter(Boolean);
+        if (dataUrls.some(function (u) { return u.length > 3000000; })) {
+          st.status = 'failed'; st.attempt = 3; photoFirstPaint(orderId, kind);
+          toast('Retake the photo showing just the ' + (kind === 'food' ? 'food' : 'bill'), true);
+          return resolve(false);
+        }
+        var base = { idToken: idToken, accessToken: accessToken, liffSource: 'order', ticketId: orderId };
+        var payload = Object.assign(kind === 'food' ? { foodPhotoDataUrls: dataUrls } : { billPhotoDataUrls: dataUrls }, base);
+        (function go() {
+          st.attempt++; st.status = 'sending'; photoFirstPaint(orderId, kind);
+          callApi('submitOrderFulfillPhotos', payload).then(function (r) {
+            if (!r || !r.ok) throw new Error((r && r.error) || 'upload failed');
+            if (st !== slot[kind]) return resolve(true); // a retake superseded this one
+            st.status = 'sent'; photoFirstPaint(orderId, kind); resolve(true);
+          }).catch(function (e) {
+            if (st !== slot[kind]) return resolve(true);
+            if (st.attempt < 3) { setTimeout(go, 3000 * st.attempt); return; }
+            st.status = 'failed'; photoFirstPaint(orderId, kind);
+            clientLog('photo-first ' + kind + ' failed for ' + orderId + ': ' + String(e && e.message || e).slice(0, 120));
+            resolve(false);
+          });
+        })();
+      });
+    });
+    photoFirstPaint(orderId, kind);
+  }
+  document.getElementById('list').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-pf-retry]');
+    if (!b) return;
+    var parts = b.getAttribute('data-pf-retry').split('|');
+    var st = photoFirst[parts[0]] && photoFirst[parts[0]][parts[1]];
+    if (st) photoFirstUpload(parts[0], parts[1], st.files);
+  });
+  /** Resolves true when both handover photos are on the server (starting any upload that never began). */
+  function photoFirstReady(orderId, foodFiles, billFiles, onTick) {
+    var slot = photoFirst[orderId] = photoFirst[orderId] || {};
+    if (!slot.food || slot.food.status === 'failed') photoFirstUpload(orderId, 'food', foodFiles);
+    if (!slot.bill || slot.bill.status === 'failed') photoFirstUpload(orderId, 'bill', billFiles);
+    var t0 = Date.now();
+    var timer = setInterval(function () { onTick(Math.round((Date.now() - t0) / 1000)); }, 1000);
+    return Promise.all([slot.food.promise, slot.bill.promise]).then(function (oks) {
+      clearInterval(timer);
+      return oks[0] && oks[1];
+    });
+  }
+
   function submitWithPhoto(orderId, fn, nextStage, kind) {
     var isKitchen = kind === 'kitchen';
     var amountEl = document.getElementById('amt-' + orderId);
@@ -2278,6 +2366,24 @@
     var phase1 = Object.assign({ stampOnly: true }, base);
     if (!isKitchen) { phase1.amount = amount; phase1.payment = payment; }
     var t0 = Date.now();
+    if (!isKitchen) {
+      // Photo-first: the pictures went up when they were picked; wait only
+      // for what is still on its way, then stamp. Nothing is uploaded after.
+      photoFirstReady(orderId, foodFiles, files, function (sec) {
+        errEl.textContent = 'Sending photos… ' + sec + ' s (keep this page open)';
+      }).then(function (ok) {
+        if (!ok) {
+          errEl.style.color = ''; submitBtn.disabled = false;
+          errEl.textContent = '⚠ A photo did not reach the server — tap Retry under it, then Save again';
+          return;
+        }
+        errEl.textContent = 'Saving…';
+        stamp();
+      });
+      return;
+    }
+    stamp();
+    function stamp() {
     callApi(fn, phase1).then(function (r) {
       // A Save the server finished in 6.6 s took ~27 s to reach the phone
       // (video, 2026-09-18 17:56). Only the phone can see that gap.
@@ -2286,7 +2392,7 @@
       errEl.style.color = '';
       submitBtn.disabled = false;
       if (!r || !r.ok) { errEl.textContent = (r && r.error) || 'Something went wrong'; return; }
-      toast('✅ Saved ' + orderId.replace(/^ORD_\d{8}_/, '#') + ' in ' + Math.round((Date.now() - t0) / 1000) + ' s — photo sending in the background');
+      toast('✅ Saved ' + orderId.replace(/^ORD_\d{8}_/, '#') + ' in ' + Math.round((Date.now() - t0) / 1000) + ' s' + (isKitchen ? ' — photo sending in the background' : ' — photos already sent'));
       openForms = {};
       applyLocalStage(orderId, nextStage);
       forceRefresh();
@@ -2294,6 +2400,7 @@
       // call is what moves every other phone. Fire-and-forget; the 5-minute
       // sweep covers a phone that dies here.
       publishBoardAfterWrite();
+      if (!isKitchen) { delete photoFirst[orderId]; return; } // v37: the handover photos are already on the row
       // Phase 2, off the button: shrink, then upload with retries.
       shrinkAll(files.concat(foodFiles), function (allUrls) {
         var dataUrls = allUrls.slice(0, files.length).filter(Boolean);
@@ -2326,6 +2433,7 @@
         errEl.textContent = '⚠ Could not save. Tap Save again — the photos are still on your phone.';
       });
     });
+    }
   }
   // รับอาหาร leaves the order at "กำลังจัดส่ง" (2) — one more press to go.
   // ส่งแล้ว (non-24BLVD) is terminal, so it lands on "ส่งมอบแล้ว" (3).
