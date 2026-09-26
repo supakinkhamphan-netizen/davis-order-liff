@@ -279,7 +279,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v37';
+  var BUILD = 'v38';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -294,7 +294,53 @@
    * CORS preflight (Apps Script has no doOptions) — see that file's header
    * comment for the full reasoning.
    */
+  /**
+   * Resolves once liff.init() has settled (either way) — or after 15 s, so a
+   * button never waits forever on an SDK that will not answer.
+   */
+  var authReadyResolve = null;
+  var authReady = new Promise(function (resolve) {
+    authReadyResolve = resolve;
+    setTimeout(resolve, 15000);
+  });
+
+  /**
+   * The credentials as of NOW, not as of page load. Two ways the page used to
+   * send a dead one (Telemetry, 16–25 Sep 2026):
+   *   - the ID token lives ~1 h and was read once at init, so a board left
+   *     open all shift sent an expired one (2–8 refusals a day) — an expired
+   *     id token is dropped here and the access token carries the call;
+   *   - the stored board is painted with live buttons before LINE answers,
+   *     and calls made in that window went out with no credential at all
+   *     (24 Sep 20:19–20:25: a runner's handover photos refused 25 times).
+   *     callApi now waits for authReady, and sends nothing without one.
+   */
+  function freshCreds() {
+    var it = '', at = '';
+    try { it = liff.getIDToken() || ''; } catch (e) { it = ''; }
+    try { at = liff.getAccessToken() || ''; } catch (e) { at = ''; }
+    if (it && at) {
+      try {
+        var d = liff.getDecodedIDToken();
+        if (d && d.exp && d.exp * 1000 < Date.now() + 60000) it = '';
+      } catch (e) { /* keep it; the server falls back to the access token */ }
+    }
+    if (!it && !at) { it = idToken; at = accessToken; }
+    return { idToken: it, accessToken: at };
+  }
+
   function callApi(fn, payload) {
+    return authReady.then(function () {
+      var c = freshCreds();
+      if (!c.idToken && !c.accessToken) {
+        throw new Error('Not connected to LINE yet — close this page and open it again from the LINE link');
+      }
+      var p = Object.assign({}, payload || {}, { idToken: c.idToken, accessToken: c.accessToken });
+      return callApiSend(fn, p);
+    });
+  }
+
+  function callApiSend(fn, payload) {
     // Hotel wifi drops mid-upload and fetch() then never settles: the promise
     // hangs, the button stays disabled, and the runner is stuck with no way
     // forward. Uploads get longer than reads because they carry photos.
@@ -2063,7 +2109,11 @@
       btn.classList.add('busy');
     }
     if (navigator.vibrate) { try { navigator.vibrate(10); } catch (e) {} }
-    return fn().finally(function () {
+    // A refusal before the request (not connected to LINE) or a dead network
+    // used to vanish here — the button came back and nothing said why.
+    return fn().catch(function (e) {
+      toast(String((e && e.message) || e || 'Could not save'), true);
+    }).finally(function () {
       if (btn) {
         btn.disabled = false;
         btn.textContent = btn.dataset.orig || btn.textContent;
@@ -2531,6 +2581,7 @@
   liff.init({ liffId: LIFF_ID }).then(function () {
     idToken = liff.getIDToken() || '';
     try { accessToken = liff.getAccessToken() || ''; } catch (e) { accessToken = ''; }
+    authReadyResolve();
     if (!idToken && !accessToken) {
       // No credential, no board: the payload carries guest room numbers. There
       // is no "view only" mode any more — buttons that can only ever fail just
@@ -2599,6 +2650,7 @@
   }).catch(function (err) {
     // The board is already on screen — a LIFF failure costs identity (and so
     // the action buttons), not the whole page.
+    authReadyResolve();
     authState = 'none';
     document.getElementById('whoLine').textContent = 'Could not connect to LINE';
     render();
