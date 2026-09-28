@@ -279,7 +279,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v40';
+  var BUILD = 'v41';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -635,6 +635,12 @@
   /** The kitchen window is charged to the kitchen lead, never to the runner who
    *  reports it (order-sla.js). Saying so out loud is the whole point: fear of
    *  being charged is why people hesitate on this button too. */
+  /** " 20:49 tas" from a server stamp and a name; either half may be missing. */
+  function tapStamp(stamp, name) {
+    var m = /^\d{4}-\d{2}-\d{2}[ T](\d{2}:\d{2})/.exec(String(stamp || ''));
+    return (m ? ' ' + m[1] : '') + (name ? ' ' + name : '');
+  }
+
   function kitchenClock(r) {
     // Fairway / Mandrake have no kitchen step (rule 24): nothing to tap before
     // "Mark delivered + bill", so a "cooking … target 30 FRI" line is wrong
@@ -651,10 +657,22 @@
       return { tier: wait >= 600 ? 'free' : 'calm', sec: wait,
         text: '🧾 waiting for the POS bill ' + humanMins(wait) + ' — tap Bill received when it arrives' };
     }
+    // v41 (owner, 2026-09-28): once the food is up, the kitchen's countdown is
+    // over — the line used to keep counting "cooking N min" at a plate that
+    // was already on the pass. It now says when it was ready and who said so,
+    // which is what the runner standing in front of the board needs.
+    if (r.stage === 1) {
+      return { tier: 'calm', sec: secondsSince(r.readyAt || r.orderedAt),
+        text: '✅ Food ready' + tapStamp(r.readyAt, r.readyByName) + ' — collect it' };
+    }
     var start = r.kitchenStartAt || r.orderedAt;
     var sec = secondsSince(start);
     var budgetSec = (r.kitchenBudgetMin || 23) * 60;
-    var why = r.kitchenBudgetText ? ' (target ' + r.kitchenBudgetText + ')' : '';
+    // Who started this clock, beside the clock itself. The optimistic local
+    // paint sets billAt to 'now' (doBillReceived), which is not a stamp — the
+    // helper ignores anything that is not one and the next poll fills it in.
+    var why = (r.kitchenBudgetText ? ' (target ' + r.kitchenBudgetText + ')' : '') +
+      (r.billAt ? ' · 🧾 bill' + tapStamp(r.billAt, r.billByName) : '');
     if (sec >= budgetSec) {
       return { tier: 'free', sec: sec, text: '🍳 cooking ' + humanMins(sec) + why + ' · past the kitchen target — tap it, you are not charged' };
     }
