@@ -279,7 +279,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v38';
+  var BUILD = 'v39';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -664,7 +664,12 @@
     return { tier: 'calm', sec: sec, text: '🍳 cooking ' + humanMins(sec) + why };
   }
 
-  function clockFor(r) { return kitchenClock(r); }
+  function clockFor(r) {
+    var c = kitchenClock(r);
+    // v39: while the kitchen holds it, the clock line also says how many plates are out.
+    if (c && r && r.stage === 0 && r.plates && r.plates.sent > 0) c = Object.assign({}, c, { text: c.text + ' · 🍽 sent ' + r.plates.sent + '/' + r.plates.total });
+    return c;
+  }
 
   /**
    * The promise clock: 30 minutes for a hotel order, 45 for shop-to-shop,
@@ -945,7 +950,21 @@
         '<div style="font-size:13px;color:var(--ink-2);margin-top:6px">Your kitchen clock starts at this tap. Food ready comes after.</div>';
     }
     if (row.stage === 0 && row.is24) {
-      return miniFormHtml(row.orderId, '🍳 Food ready (kitchen taps this)', 'submitFood', 'kitchen');
+      // v39 — plate by plate (owner, 2026-09-28): the kitchen taps each plate
+      // out; when the count reaches the ticket the server stamps Food ready by
+      // itself. The runner never touches this — they deliver and close once.
+      var plates = row.plates || null;
+      var canPlate = !!(me && (me.isKitchen || me.isManager || /manager/.test(String(me.role || ''))));
+      var plateBlock = '';
+      if (plates && plates.total > 1) {
+        var sentText = '🍽 Plate out — sent ' + plates.sent + '/' + plates.total + (plates.times && plates.times.length ? ' · ' + plates.times.slice(-3).join(', ') : '');
+        plateBlock = canPlate
+          ? '<button class="actionBtn" id="plate-' + row.orderId + '" onclick="doPlateOut(\'' + row.orderId + '\')" ' +
+            'style="background:var(--panel);color:var(--ink);box-shadow:var(--raise-sm);margin-bottom:8px">' + esc(sentText) + '</button>' +
+            '<div style="font-size:13px;color:var(--ink-2);margin:-2px 0 8px">Tap once per plate as it leaves. The last plate marks Food ready by itself.</div>'
+          : '<div class="promise ok" style="margin-bottom:8px">' + esc(sentText) + '</div>';
+      }
+      return plateBlock + miniFormHtml(row.orderId, '🍳 Food ready (kitchen taps this)', 'submitFood', 'kitchen');
     }
     if (row.stage === 0 && !row.is24) {
       return miniFormHtml(row.orderId, '✅ Mark delivered + bill', 'submitDeliverForm', 'handover');
@@ -2145,6 +2164,57 @@
         (allRows || []).forEach(function (x) { if (x.orderId === orderId) { x.billAt = 'now'; x.kitchenStartAt = ''; } });
         rememberFloor(orderId, { billAt: 'now' });
         lastPayload = ''; boardGeneration++; render(); forceRefresh();
+        publishBoardAfterWrite();
+      });
+    });
+  }
+
+  /**
+   * v39 — one plate left the kitchen. The first tap also opens the camera for
+   * a picture of that plate (photoOnly: saved to the row, no stamp) — the
+   * plate that leaves first is the one worth a photo; the tap itself never
+   * waits for the picture. When the server says `ready` the last plate went
+   * out and the order is Food ready.
+   */
+  function doPlateOut(orderId) {
+    var row = (allRows || []).filter(function (x) { return x.orderId === orderId; })[0];
+    var first = !row || !row.plates || !row.plates.sent;
+    if (first) {
+      try {
+        var input = document.createElement('input');
+        input.type = 'file'; input.accept = 'image/*'; input.setAttribute('capture', 'environment');
+        input.style.display = 'none';
+        input.onchange = function () {
+          var files = Array.prototype.slice.call(input.files || []).slice(0, 1);
+          if (!files.length) return;
+          shrinkAll(files, function (urls) {
+            var dataUrls = urls.filter(Boolean);
+            if (!dataUrls.length) return;
+            uploadInBackground(orderId, 'submitOrderFoodForm',
+              { idToken: idToken, accessToken: accessToken, liffSource: 'order', ticketId: orderId, photoOnly: true, photoDataUrls: dataUrls }, 'first plate photo');
+          });
+          try { document.body.removeChild(input); } catch (e) {}
+        };
+        document.body.appendChild(input);
+        input.click(); // inside the tap, or the phone will not open the camera
+      } catch (e) { /* no camera: the tap still counts */ }
+    }
+    withButtonBusy('plate-' + orderId, 'Saving...', function () {
+      return callApi('plateOutViaLiff', { idToken: idToken, accessToken: accessToken, orderId: orderId }).then(function (r) {
+        if (!r || !r.ok) { toast((r && (r.error || r.reason)) || 'Could not save', true); return; }
+        (allRows || []).forEach(function (x) {
+          if (x.orderId !== orderId) return;
+          x.plates = Object.assign({}, x.plates || { total: r.total, times: [] }, { sent: r.sent, total: r.total });
+        });
+        if (r.ready) {
+          toast('🍳 All ' + r.total + ' plates out — Food ready');
+          openForms = {};
+          applyLocalStage(orderId, 1);
+        } else {
+          toast('🍽 Plate out ' + r.sent + '/' + r.total);
+          lastPayload = ''; boardGeneration++; render();
+        }
+        forceRefresh();
         publishBoardAfterWrite();
       });
     });
