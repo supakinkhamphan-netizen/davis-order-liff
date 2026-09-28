@@ -279,7 +279,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v41';
+  var BUILD = 'v42';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -2244,7 +2244,10 @@
     withButtonBusy('nudge-' + orderId, 'Nudging...', function () {
       return callApi('nudgeOrderViaLiff', { idToken: idToken, accessToken: accessToken, orderId: orderId }).then(function (r) {
         if (!r.ok) { toast(r.error || 'Could not nudge', true); return; }
-        toast('The shop manager has been nudged');
+        // v42: the nag now follows the step the order is stuck at (backend
+        // rule 58), so say who was actually woken — a kitchen-stuck order
+        // goes to the chef, not to the shop manager the old text claimed.
+        toast(r.toName ? '🔔 ' + r.toName + ' has been nudged' : 'The manager has been nudged');
       });
     });
   }
