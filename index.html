@@ -279,7 +279,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v39';
+  var BUILD = 'v40';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -1358,7 +1358,8 @@
       html += '<div class="empty" style="padding:16px 0">ไม่มีเรื่องรออุทธรณ์ 🎉</div>';
     } else {
       html += appeals.filed.map(function (a) {
-        var key = a.orderId + '|' + a.leg;
+        // v40: one row per person for an order + leg, so the key says whose (LINE id, else name).
+        var key = a.orderId + '|' + a.leg + '|' + (a.chargedLineId || a.charged || '');
         var busy = appealBusy === key;
         var d = ' data-appeal="' + escAttr(key) + '"';
         return '<div class="appealRow">' +
@@ -1417,6 +1418,7 @@
     var payload = creds();
     payload.orderId = parts[0];
     payload.leg = parts[1];
+    payload.who = parts.slice(2).join('|');
     payload.decision = act;
     if (act === 'reassign') {
       var pick = document.querySelector('[data-reassign-pick="' + key.replace(/"/g, '') + '"]');
