@@ -228,6 +228,26 @@
   .promise.ok { background:#1E3A2C; color:var(--ok); }
   .promise.soon { background:var(--warn-bg); color:var(--warn-ink); }
   .promise.late { background:#3D2222; color:var(--danger); }
+  /* v44 fix panel (executives) */
+  .fixBtn { margin-top:10px; border:1px solid var(--line); background:var(--panel); color:var(--ink); border-radius:10px; padding:8px 12px; font:inherit; font-size:14px; font-weight:700; }
+  .fixStrip { border:1px solid var(--warn-ink); }
+  .fixStripHead { font-weight:800; margin-bottom:6px; color:var(--warn-ink); }
+  .fixItem { display:block; width:100%; text-align:left; border:none; background:none; color:var(--ink); font:inherit; font-size:14px; padding:8px 0; border-top:1px solid var(--line); }
+  .fixSheet { max-height:88vh; overflow-y:auto; }
+  .fixTimeline { display:grid; gap:4px; margin:6px 0 10px; font-size:14px; }
+  .fixRow { display:grid; grid-template-columns:110px 1fr auto; gap:8px; }
+  .fixRow span:last-child { color:var(--ink-2); }
+  .fixTabs { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+  .fixTab { border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:999px; padding:8px 12px; font:inherit; font-size:14px; }
+  .fixTab.on { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:700; }
+  .fixLabel { display:block; margin-top:10px; font-size:13px; color:var(--ink-2); }
+  .fixInput { width:100%; min-height:44px; margin-top:4px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; font-size:16px; background:var(--card); color:var(--ink); box-sizing:border-box; }
+  .fixChips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .fixChip { border:1px dashed var(--accent); background:none; color:var(--accent); border-radius:999px; padding:6px 10px; font:inherit; font-size:13px; }
+  .fixCheck { display:flex; gap:8px; align-items:center; margin-top:12px; font-size:15px; }
+  .fixHistory { margin-top:10px; font-size:12px; color:var(--ink-2); }
+  .fixError { margin-top:10px; color:var(--danger); font-weight:700; }
+  .fixGo { background:var(--accent); color:var(--accent-ink); border:none; }
   .mgrPeriodRow { display:flex; gap:8px; margin-top:10px; }
   .mgrMonthInput { margin-top:10px; width:100%; min-height:44px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
 </style>
@@ -279,7 +299,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v43';
+  var BUILD = 'v44';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -1518,6 +1538,184 @@
     { key: 4, title: '⚪ ยังไม่ถึงเกณฑ์', collapsed: true },
   ];
   var group4Open = false;
+  // ---- v44 fix panel ----
+  // Rule 59 (backend order-fix.js): executives close an order for staff, fix
+  // its times, reopen it or cancel it after delivery. A sheet over the board,
+  // outside #list, so a realtime repaint of the list can never wipe what is
+  // typed in it (the v43 lesson).
+  var fixState = null; // { orderId, ctx, tab, draft: { reason, noFine, times, amount, runner }, busy, error }
+  var fixQueue = [];
+  var FIX_TAB_LABELS = { close: '✅ Close for staff', retime: '🕐 Fix times', reopen: '🔄 Reopen', cancel: '🚫 Cancel' };
+  var FIX_TIME_LABELS = { bill: '🧾 Bill received', ready: '🍳 Food ready', delivered: '🛵 Delivered' };
+
+  function fixButtonHtml(r) {
+    if (!isFullManager()) return '';
+    return '<button class="fixBtn" onclick="openFix(\'' + escAttr(r.orderId) + '\')">🛠 Fix</button>';
+  }
+  function fixStripHtml() {
+    if (!isFullManager() || !fixQueue.length) return '';
+    return '<div class="card fixStrip"><div class="fixStripHead">🛠 Needs fixing (' + fixQueue.length + ')</div>' +
+      fixQueue.slice(0, 8).map(function (e) {
+        return '<button class="fixItem" onclick="openFix(\'' + escAttr(e.orderId) + '\')"><b>' +
+          esc(String(e.orderId).replace(/^ORD_\d{4}(\d{2})(\d{2})_/, '$2/$1 #')) + '</b> · ' + esc(e.text) + (e.seller ? ' · ' + esc(e.seller) : '') + '</button>';
+      }).join('') +
+      (fixQueue.length > 8 ? '<div class="sub">+' + (fixQueue.length - 8) + ' more</div>' : '') + '</div>';
+  }
+  function loadFixQueue() {
+    if (!isFullManager()) return Promise.resolve();
+    return callApi('fixQueueViaLiff', creds()).then(function (r) {
+      if (r && r.ok) { fixQueue = r.items || []; if (!hasOpenForm()) render(); }
+    }).catch(function () {});
+  }
+  function openFix(orderId) {
+    fixState = { orderId: orderId, ctx: null, tab: '', draft: { reason: '', noFine: false, times: {}, amount: '', runner: '' }, busy: false, error: '' };
+    renderFixSheet();
+    var p = creds(); p.orderId = orderId;
+    callApi('fixContextViaLiff', p).then(function (ctx) {
+      if (!fixState || fixState.orderId !== orderId) return;
+      if (!ctx || !ctx.ok) { fixState.error = (ctx && (ctx.error || ctx.reason)) || 'Could not load the order'; renderFixSheet(); return; }
+      fixState.ctx = ctx;
+      fixState.tab = (ctx.allowed || [])[0] || '';
+      renderFixSheet();
+    }).catch(function () { if (fixState) { fixState.error = 'Could not load the order'; renderFixSheet(); } });
+  }
+  function closeFix() {
+    fixState = null;
+    var el = document.getElementById('fixSheet');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+  function fixTimeValue(st, field) {
+    var d = st.draft.times[field];
+    if (d != null) return d;
+    return (st.ctx && st.ctx.stamps && st.ctx.stamps[field]) || '';
+  }
+  function fixTimeFieldHtml(st, field) {
+    var v = fixTimeValue(st, field);
+    var chips = ((st.ctx.suggest && st.ctx.suggest[field]) || []).map(function (s) {
+      return '<button class="fixChip" data-pick="' + field + '|' + escAttr(s.value) + '">' + esc(s.label) + '</button>';
+    }).join('');
+    return '<label class="fixLabel">' + FIX_TIME_LABELS[field] + '</label>' +
+      '<input class="fixInput" type="datetime-local" data-fix="time-' + field + '" value="' + escAttr(String(v).replace(' ', 'T')) + '" />' +
+      (chips ? '<div class="fixChips">' + chips + '</div>' : '');
+  }
+  function fixSheetHtml(st) {
+    var head = '<div class="sheetTitle">🛠 Fix ' + esc(st.orderId) + '</div>';
+    if (!st.ctx) return '<div class="sheet fixSheet">' + head + '<div class="sheetHint">' + esc(st.error || 'Loading…') + '</div>' +
+      '<button class="sheetBtn cancel" data-close="1">Close</button></div>';
+    var c = st.ctx;
+    var line = function (label, at, by) {
+      return '<div class="fixRow"><span>' + label + '</span><b>' + esc(at ? String(at).slice(5) : '—') + '</b><span>' + esc(by || '') + '</span></div>';
+    };
+    var html = head + '<div class="sheetHint">' + esc(c.seller) + ' · ' + esc(c.status) + '</div>' +
+      '<div class="fixTimeline">' + line('Ordered', c.stamps.ordered, c.by.ordered) + line('Bill received', c.stamps.bill, c.by.bill) +
+      line('Food ready', c.stamps.ready, c.by.ready) + line('Delivered', c.stamps.delivered, c.by.delivered) + '</div>';
+    if (!(c.allowed || []).length) return '<div class="sheet fixSheet">' + html + '<div class="sheetHint">This order is cancelled — nothing to fix.</div><button class="sheetBtn cancel" data-close="1">Close</button></div>';
+    html += '<div class="fixTabs">' + c.allowed.map(function (t) {
+      return '<button class="fixTab' + (st.tab === t ? ' on' : '') + '" data-tab="' + t + '">' + FIX_TAB_LABELS[t] + '</button>';
+    }).join('') + '</div>';
+    if (st.tab === 'close') {
+      html += fixTimeFieldHtml(st, 'delivered');
+      if (!c.stamps.ready) html += fixTimeFieldHtml(st, 'ready');
+      html += '<label class="fixLabel">Who delivered it?</label><select class="fixInput" data-fix="runner"><option value="">Nobody / not sure — no delivery fine</option>' +
+        (c.runners || []).map(function (r) { return '<option value="' + escAttr(r.lineId) + '"' + (st.draft.runner === r.lineId ? ' selected' : '') + '>' + esc(r.name) + '</option>'; }).join('') + '</select>' +
+        '<label class="fixLabel">Amount paid (blank = ' + esc(c.amount || '-') + ')</label><input class="fixInput" type="number" inputmode="decimal" data-fix="amount" value="' + escAttr(st.draft.amount) + '" />';
+    } else if (st.tab === 'retime') {
+      html += fixTimeFieldHtml(st, 'bill') + fixTimeFieldHtml(st, 'ready') + (c.stamps.delivered ? fixTimeFieldHtml(st, 'delivered') : '');
+    } else if (st.tab === 'reopen') {
+      html += '<div class="sheetHint">Clears the delivery time, amount and handover photos and puts the order back on the board, so the right person can deliver it. Its fines are cancelled.</div>';
+    } else if (st.tab === 'cancel') {
+      html += '<div class="sheetHint">Cancels the order even though it was delivered. It leaves the sales, and every fine on it is cancelled — HR is told to give back anything already taken.</div>';
+    }
+    html += '<label class="fixLabel">Reason (required)</label><textarea class="fixInput" rows="2" data-fix="reason">' + esc(st.draft.reason) + '</textarea>';
+    if (st.tab === 'close' || st.tab === 'retime') {
+      html += '<label class="fixCheck"><input type="checkbox" data-fix="noFine"' + (st.draft.noFine ? ' checked' : '') + ' /> No fine for this order</label>';
+    }
+    var audit = (c.audit || []).filter(function (a) { return /^FIX_/.test(a.action); }).slice(-3);
+    if (audit.length) html += '<div class="fixHistory">' + audit.map(function (a) { return esc(String(a.at).slice(5, 16) + ' ' + a.actor + ' · ' + a.action.replace('FIX_', '')); }).join('<br>') + '</div>';
+    if (st.error) html += '<div class="fixError">' + esc(st.error) + '</div>';
+    html += '<button class="sheetBtn fixGo" data-go="1"' + (st.busy ? ' disabled' : '') + '>' + (st.busy ? 'Saving…' : 'Confirm — ' + FIX_TAB_LABELS[st.tab]) + '</button>' +
+      '<button class="sheetBtn cancel" data-close="1">Close, change nothing</button>';
+    return '<div class="sheet fixSheet">' + html + '</div>';
+  }
+  function renderFixSheet() {
+    if (!fixState) { closeFix(); return; }
+    var el = document.getElementById('fixSheet');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'fixSheet';
+      el.className = 'sheetWrap';
+      el.addEventListener('click', fixClick);
+      el.addEventListener('input', fixEdit);
+      el.addEventListener('change', fixEdit);
+      document.body.appendChild(el);
+    }
+    el.innerHTML = fixSheetHtml(fixState);
+  }
+  function fixClick(e) {
+    if (!fixState) return;
+    var t = e.target;
+    if (t.id === 'fixSheet' || (t.getAttribute && t.getAttribute('data-close'))) { closeFix(); return; }
+    var b = t.closest ? t.closest('button') : null;
+    if (!b) return;
+    if (b.getAttribute('data-tab')) { fixState.tab = b.getAttribute('data-tab'); fixState.error = ''; renderFixSheet(); return; }
+    var pick = b.getAttribute('data-pick');
+    if (pick) { var i = pick.indexOf('|'); fixPick(pick.slice(0, i), pick.slice(i + 1)); return; }
+    if (b.getAttribute('data-go')) submitFix();
+  }
+  function fixEdit(e) {
+    var k = e.target && e.target.getAttribute && e.target.getAttribute('data-fix');
+    if (!k || !fixState) return;
+    if (k === 'noFine') fixState.draft.noFine = !!e.target.checked;
+    else if (k.indexOf('time-') === 0) fixState.draft.times[k.slice(5)] = String(e.target.value || '').replace('T', ' ');
+    else fixState.draft[k] = e.target.value;
+  }
+  function fixPick(field, value) { fixState.draft.times[field] = value; renderFixSheet(); }
+  /** What is sent: only the times that differ from the order's own stamps. */
+  function fixPayload(st) {
+    var p = { orderId: st.orderId, action: st.tab, reason: String(st.draft.reason || '').trim(), noFine: !!st.draft.noFine };
+    if (st.tab === 'close' || st.tab === 'retime') {
+      var times = {};
+      Object.keys(st.draft.times).forEach(function (k) {
+        var v = st.draft.times[k];
+        if (v && v !== ((st.ctx.stamps || {})[k] || '')) times[k] = v;
+      });
+      p.times = times;
+    }
+    if (st.tab === 'close') {
+      if (st.draft.runner) p.runnerLineId = st.draft.runner;
+      if (String(st.draft.amount || '').trim()) p.amount = st.draft.amount;
+    }
+    return p;
+  }
+  function fixMoneyText(f) {
+    var parts = [];
+    (f.cancelled || []).filter(function (x) { return x.baht > 0; }).forEach(function (x) { parts.push(x.name + ' ' + x.baht + ' cancelled'); });
+    (f.added || []).filter(function (x) { return x.baht > 0; }).forEach(function (x) { parts.push(x.name + ' ' + x.baht + ' new fine'); });
+    return parts.length ? ' — ' + parts.join(', ') : ' — no fine changed';
+  }
+  function submitFix() {
+    if (!fixState || fixState.busy || !fixState.ctx) return;
+    var p = fixPayload(fixState);
+    if (p.reason.length < 3) { fixState.error = 'Write a reason first (at least 3 characters)'; renderFixSheet(); return; }
+    if (p.action === 'close' && !(p.times && p.times.delivered)) { fixState.error = 'Pick the time it was delivered'; renderFixSheet(); return; }
+    fixState.busy = true; fixState.error = ''; renderFixSheet();
+    var orderId = fixState.orderId;
+    return callApi('fixOrderViaLiff', Object.assign(creds(), p)).then(function (r) {
+      if (!r || !r.ok) {
+        if (fixState) { fixState.busy = false; fixState.error = (r && (r.error || r.reason)) || 'Could not save'; renderFixSheet(); }
+        return;
+      }
+      toast('🛠 ' + orderId + ' fixed' + fixMoneyText(r.fines || {}) + (r.warning ? ' · ' + r.warning : ''), !!r.warning);
+      closeFix();
+      forceRefresh();
+      publishBoardAfterWrite();
+      loadFixQueue();
+    }).catch(function (e) {
+      if (fixState) { fixState.busy = false; fixState.error = String((e && e.message) || 'Could not save'); renderFixSheet(); }
+    });
+  }
+  // ---- end v44 fix panel ----
+
   function cardHtml(r) {
     var title = r.isSell ? (esc(r.buyer) + ' → ' + esc(r.seller)) : esc(r.subtitle);
     var sub = r.isSell ? ('Shop to shop — ' + esc(r.seller) + ' prepares it') : esc(r.seller);
@@ -1536,6 +1734,7 @@
       (r.isCancelled ? '<div class="promise late">🚫 Cancelled</div>' : '') +
       '<div class="items">' + esc(r.items) + '</div>' +
       actionSectionHtml(r) +
+      fixButtonHtml(r) +
       '<button class="moreBtn" onclick="toggleMenu(\'' + r.orderId + '\')" aria-label="More options">⋯</button>' +
       '<div class="moreMenu' + (menuOpen ? ' open' : '') + '" id="menu-' + r.orderId + '">' +
         '<div style="font-size:12px;color:var(--ink-2);padding:0 4px 4px">' + esc(r.orderId) + '</div>' +
@@ -1581,7 +1780,7 @@
       '<div class="title" style="font-size:16px">' + esc(r.subtitle) + '</div>' +
       '<div class="sub">' + esc(r.seller) + '</div>' +
       '<div class="items" style="margin-top:4px">' + esc(r.items.replace(/\n/g, ', ')) + '</div>' +
-      '</div>' + actionSectionHtml(r, true) + '</div>' +
+      '</div>' + actionSectionHtml(r, true) + '</div>' + fixButtonHtml(r) +
       // The first stage needs a photo (24BLVD) or a bill + amount (everyone
       // else) before it can advance.
       (r.stage === 0 ? formBodyHtml(r.orderId, r.is24 ? 'submitFood' : 'submitDeliverForm', r.is24 ? 'kitchen' : 'handover') : '') +
@@ -1627,7 +1826,7 @@
       buckets[k].sort(function (a, b) { return clockFor(b).sec - clockFor(a).sec; }); // longest waiting first
     });
 
-    var html = '';
+    var html = fixStripHtml();
     [0, 1, 2, 3, 4].forEach(function (g) {
       var items = buckets[g];
       if (!items.length) return;
@@ -2770,6 +2969,8 @@
         return;
       }
       render(); // redraw now that me.userId is known — the action buttons need it
+      // v44: the executives' Needs fixing strip, refreshed every 5 minutes.
+      if (isFullManager()) { loadFixQueue(); setInterval(loadFixQueue, 300000); }
     });
   }).catch(function (err) {
     // The board is already on screen — a LIFF failure costs identity (and so
