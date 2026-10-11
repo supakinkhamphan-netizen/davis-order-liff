@@ -51,6 +51,9 @@ let fails=0; const eq=(l,g,w)=>{const ok=JSON.stringify(g)===JSON.stringify(w); 
   eq('no "take the photo again" message',el('err-ORD_4').textContent.indexOf('No photo')<0,true);
   eq('the photos already sent are used',calls[0],['ready',['f'],['b']]);
   eq('and the handover is stamped',calls.some(c=>c[0]==='submitOrderFulfillForm'),true);
+  // v45: the stamp carries how long Save waited, so the server stamps the press.
+  const st=calls.find(c=>c[0]==='submitOrderFulfillForm');
+  eq('the stamp says how long Save waited',typeof st[1].waitedMs==='number'&&st[1].waitedMs>=0,true);
   // a photo that FAILED to upload still has to be taken again
   c3.photoFirst.ORD_5={food:{status:'failed',files:['f']},bill:{status:'sent',files:['b']}};
   el('amt-ORD_5').value='100'; el('food-ORD_5'); el('photo-ORD_5');

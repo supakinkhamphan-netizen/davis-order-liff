@@ -299,7 +299,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v44';
+  var BUILD = 'v45';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -2544,7 +2544,7 @@
     // Photo-first (v37): only the handover form has a food-<id> input; the
     // kitchen's photo-<id> keeps the old after-the-stamp path.
     if (m && document.getElementById('food-' + m[2])) {
-      photoFirstUpload(m[2], m[1] === 'food' ? 'food' : 'bill', Array.prototype.slice.call(e.target.files || []).slice(0, m[1] === 'food' ? 1 : 3));
+      photoFirstUpload(m[2], m[1] === 'food' ? 'food' : 'bill', Array.prototype.slice.call(e.target.files || []).slice(0, m[1] === 'food' ? 1 : 3), 'pick');
       return;
     }
     if (e.target.id !== 'salesFrom' && e.target.id !== 'salesTo') return;
@@ -2641,8 +2641,15 @@
     el.className = 'pf' + (st && st.status === 'sent' ? ' ok' : st && st.status === 'failed' ? ' bad' : '');
     el.innerHTML = photoFirstText(orderId, kind);
   }
-  function photoFirstUpload(orderId, kind, files) {
+  // v45: every upload says where it came from, so Order_Audit can tell a
+  // retake from a second upload of the same photo (ORD_20261011_09: each
+  // photo went up twice and nothing could say why).
+  var photoPicks = {}; // orderId|kind -> how many uploads of that kind this page started
+  function photoFirstUpload(orderId, kind, files, source) {
     if (!files.length) return;
+    var pickKey = orderId + '|' + kind;
+    photoPicks[pickKey] = (photoPicks[pickKey] || 0) + 1;
+    var photoMeta = { source: source || 'pick', pick: photoPicks[pickKey], pageSec: Math.round(performance.now() / 1000) };
     var slot = photoFirst[orderId] = photoFirst[orderId] || {};
     var st = slot[kind] = { status: 'sending', attempt: 0, files: files, promise: null };
     st.promise = new Promise(function (resolve) {
@@ -2653,7 +2660,7 @@
           toast('Retake the photo showing just the ' + (kind === 'food' ? 'food' : 'bill'), true);
           return resolve(false);
         }
-        var base = { idToken: idToken, accessToken: accessToken, liffSource: 'order', ticketId: orderId };
+        var base = { idToken: idToken, accessToken: accessToken, liffSource: 'order', ticketId: orderId, photoMeta: photoMeta };
         var payload = Object.assign(kind === 'food' ? { foodPhotoDataUrls: dataUrls } : { billPhotoDataUrls: dataUrls }, base);
         (function go() {
           st.attempt++; st.status = 'sending'; photoFirstPaint(orderId, kind);
@@ -2686,13 +2693,13 @@
     if (!b) return;
     var parts = b.getAttribute('data-pf-retry').split('|');
     var st = photoFirst[parts[0]] && photoFirst[parts[0]][parts[1]];
-    if (st) photoFirstUpload(parts[0], parts[1], st.files);
+    if (st) photoFirstUpload(parts[0], parts[1], st.files, 'retry');
   });
   /** Resolves true when both handover photos are on the server (starting any upload that never began). */
   function photoFirstReady(orderId, foodFiles, billFiles, onTick) {
     var slot = photoFirst[orderId] = photoFirst[orderId] || {};
-    if (!slot.food || slot.food.status === 'failed') photoFirstUpload(orderId, 'food', foodFiles);
-    if (!slot.bill || slot.bill.status === 'failed') photoFirstUpload(orderId, 'bill', billFiles);
+    if (!slot.food || slot.food.status === 'failed') photoFirstUpload(orderId, 'food', foodFiles, 'save');
+    if (!slot.bill || slot.bill.status === 'failed') photoFirstUpload(orderId, 'bill', billFiles, 'save');
     var t0 = Date.now();
     var timer = setInterval(function () { onTick(Math.round((Date.now() - t0) / 1000)); }, 1000);
     return Promise.all([slot.food.promise, slot.bill.promise]).then(function (oks) {
@@ -2756,6 +2763,9 @@
     }
     stamp();
     function stamp() {
+    // v45: the handover is stamped at the PRESS, not when the photos finished
+    // going up — the server takes this wait off its own clock (orderPressedAt_).
+    if (!isKitchen) phase1.waitedMs = Date.now() - t0;
     callApi(fn, phase1).then(function (r) {
       // A Save the server finished in 6.6 s took ~27 s to reach the phone
       // (video, 2026-09-18 17:56). Only the phone can see that gap.
