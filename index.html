@@ -279,7 +279,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v42';
+  var BUILD = 'v43';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -1011,6 +1011,15 @@
    * paid, so its form is one photo and nothing to type; the handover takes
    * the money, the bill and a photo of the food as it was left.
    */
+  // v43: what a runner typed survives any repaint of the form.
+  var formDrafts = {}; // orderId -> { amt, pay }
+  function draftOf(orderId) { return formDrafts[orderId] || {}; }
+  function payOptionsHtml(orderId) {
+    var cur = draftOf(orderId).pay;
+    return ['Room Charge', 'Cash', 'Card', 'QR Code'].map(function (v) {
+      return '<option value="' + v + '"' + (cur === v ? ' selected' : '') + '>' + v + '</option>';
+    }).join('');
+  }
   function formBodyHtml(orderId, submitFnName, kind) {
     var open = !!openForms[orderId];
     var body = '';
@@ -1019,8 +1028,8 @@
         '<input type="file" accept="image/*" id="photo-' + orderId + '" />' +
         '<div style="font-size:12px;color:var(--ink-2);margin-top:6px">This photo shows the food was ready when you tapped. Nothing else to fill in.</div>';
     } else {
-      body = '<label>Amount paid</label><input type="number" inputmode="decimal" id="amt-' + orderId + '" placeholder="e.g. 350" />' +
-        '<label>Payment</label><select id="pay-' + orderId + '"><option value="Room Charge">Room Charge</option><option value="Cash">Cash</option><option value="Card">Card</option><option value="QR Code">QR Code</option></select>' +
+      body = '<label>Amount paid</label><input type="number" inputmode="decimal" id="amt-' + orderId + '" placeholder="e.g. 350" value="' + esc(draftOf(orderId).amt || '') + '" />' +
+        '<label>Payment</label><select id="pay-' + orderId + '">' + payOptionsHtml(orderId) + '</select>' +
         // No `capture` attribute: it forces the camera on many phones, so a bill that
         // was already photographed (or already handed back) could not be attached at
         // all.
@@ -2005,6 +2014,13 @@
       if (!rows || rows.error) return;
       noteServerNow(rows);
       clearOffline();
+      // v43: never over an open form. Coming back from the camera fires
+      // visibilitychange → forceRefresh, and this repaint wiped the photo
+      // just taken and the amount just typed — Snow re-took the handover
+      // photos 14 times over 30 minutes on ORD_20261008_01 before one Save
+      // got through, and the handover was stamped 30 minutes late. Held like
+      // a realtime snapshot; toggleForm applies it when the form closes.
+      if (hasOpenForm()) { pendingRealtime = rows; return; }
       applyFloor(rows);
       allRows = rows;
       lastPayload = JSON.stringify(rows);
@@ -2458,6 +2474,14 @@
     });
     photoFirstPaint(orderId, kind);
   }
+  ['input', 'change'].forEach(function (type) {
+    document.getElementById('list').addEventListener(type, function (e) {
+      var m = /^(amt|pay)-(.+)$/.exec((e.target && e.target.id) || '');
+      if (!m) return;
+      var d = formDrafts[m[2]] = formDrafts[m[2]] || {};
+      d[m[1]] = e.target.value;
+    });
+  });
   document.getElementById('list').addEventListener('click', function (e) {
     var b = e.target.closest('[data-pf-retry]');
     if (!b) return;
@@ -2490,6 +2514,12 @@
     var foodFiles = foodEl ? Array.prototype.slice.call(foodEl.files || []).slice(0, 1) : [];
     var errEl = document.getElementById('err-' + orderId);
     var submitBtn = document.getElementById('submit-' + orderId);
+    // v43: a handover photo that is already up (or on its way) counts even
+    // when its file box came back empty — the server holds it, and asking for
+    // it again is what sent runners round the camera loop.
+    var pf = photoFirst[orderId] || {};
+    if (!isKitchen && !foodFiles.length && pf.food && pf.food.status !== 'failed') foodFiles = pf.food.files;
+    if (!isKitchen && !files.length && pf.bill && pf.bill.status !== 'failed') files = pf.bill.files;
     errEl.textContent = '';
     if (!isKitchen && !amount) { errEl.textContent = '⚠ Enter the amount paid'; return; }
     // The photos are still required before Save — nobody may skip them —
@@ -2537,6 +2567,7 @@
       if (!r || !r.ok) { errEl.textContent = (r && r.error) || 'Something went wrong'; return; }
       toast('✅ Saved ' + orderId.replace(/^ORD_\d{8}_/, '#') + ' in ' + Math.round((Date.now() - t0) / 1000) + ' s' + (isKitchen ? ' — photo sending in the background' : ' — photos already sent'));
       openForms = {};
+      delete formDrafts[orderId];
       applyLocalStage(orderId, nextStage);
       forceRefresh();
       // v36: the stamp answered without publishing (server rule 38) — this
