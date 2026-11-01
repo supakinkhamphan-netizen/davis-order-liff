@@ -248,6 +248,10 @@
   .fixHistory { margin-top:10px; font-size:12px; color:var(--ink-2); }
   .fixError { margin-top:10px; color:var(--danger); font-weight:700; }
   .fixGo { background:var(--accent); color:var(--accent-ink); border:none; }
+  .bulkList { max-height:40vh; overflow-y:auto; margin:8px 0; border-top:1px solid var(--line); }
+  .bulkRow { display:flex; gap:10px; align-items:flex-start; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px; min-height:44px; }
+  .bulkRow input { width:22px; height:22px; flex:none; margin-top:1px; }
+  .bulkEntry { color:var(--accent); font-weight:700; }
   .mgrPeriodRow { display:flex; gap:8px; margin-top:10px; }
   .mgrMonthInput { margin-top:10px; width:100%; min-height:44px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; background:var(--card); color:var(--ink); }
 </style>
@@ -299,7 +303,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v45';
+  var BUILD = 'v46';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -1559,7 +1563,8 @@
         return '<button class="fixItem" onclick="openFix(\'' + escAttr(e.orderId) + '\')"><b>' +
           esc(String(e.orderId).replace(/^ORD_\d{4}(\d{2})(\d{2})_/, '$2/$1 #')) + '</b> · ' + esc(e.text) + (e.seller ? ' · ' + esc(e.seller) : '') + '</button>';
       }).join('') +
-      (fixQueue.length > 8 ? '<div class="sub">+' + (fixQueue.length - 8) + ' more</div>' : '') + '</div>';
+      (fixQueue.length > 8 ? '<div class="sub">+' + (fixQueue.length - 8) + ' more</div>' : '') +
+      (typeof bulkEntryHtml === 'function' ? bulkEntryHtml(fixQueue.filter(function (e) { return e.kind === 'open' || e.kind === 'missing'; }).length) : '') + '</div>';
   }
   function loadFixQueue() {
     if (!isFullManager()) return Promise.resolve();
@@ -1715,6 +1720,162 @@
     });
   }
   // ---- end v44 fix panel ----
+
+  // ---- v46 bulk fix ----
+  // Owner, 2026-11-01: "ทำปุ่มปิดหลายใบพร้อมกันให้หน่อย". The LINE quota ran
+  // out on 16 Oct, kitchens got no cards, ~75 orders were left open. Pick
+  // several, close them for staff (the server estimates the times and never
+  // fines — fixBulkViaLiff, backend rule 62) or cancel them. At most 20 ids
+  // per call; the sheet loops. A sheet outside #list, like the fix panel.
+  var BULK_BATCH = 20;
+  var bulkState = null; // { items, picked, filter, action, reason, busy, progress, error, failed }
+  var BULK_FILTERS = {
+    kitchen: { label: 'Kitchen tapped', test: function (e) { return !!e.bill; } },
+    none: { label: 'Nothing tapped', test: function (e) { return !e.bill; } },
+    all: { label: 'All', test: function () { return true; } }
+  };
+
+  function bulkEntryHtml(n) {
+    if (!isFullManager() || !n) return '';
+    return '<button class="fixItem bulkEntry" onclick="openBulk()">☑ Select several to close or cancel (' + n + ')</button>';
+  }
+  function openBulk() {
+    bulkState = { items: null, picked: {}, filter: 'all', action: 'close', reason: '', busy: false, progress: '', error: '', failed: [] };
+    renderBulkSheet();
+    var p = creds(); p.all = true;
+    return callApi('fixQueueViaLiff', p).then(function (r) {
+      if (!bulkState) return;
+      if (!r || !r.ok) { bulkState.error = (r && (r.error || r.reason)) || 'Could not load the list'; renderBulkSheet(); return; }
+      bulkState.items = (r.items || []).filter(function (e) { return e.kind === 'open' || e.kind === 'missing'; });
+      renderBulkSheet();
+    }).catch(function () { if (bulkState) { bulkState.error = 'Could not load the list'; renderBulkSheet(); } });
+  }
+  function closeBulk() {
+    bulkState = null;
+    var el = document.getElementById('bulkSheet');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+  function bulkShown(st) {
+    var f = BULK_FILTERS[st.filter] || BULK_FILTERS.all;
+    return (st.items || []).filter(f.test);
+  }
+  function bulkPickedIds() {
+    if (!bulkState || !bulkState.items) return [];
+    return bulkState.items.filter(function (e) { return bulkState.picked[e.orderId]; }).map(function (e) { return e.orderId; });
+  }
+  function bulkSetFilter(f) { if (bulkState && BULK_FILTERS[f]) { bulkState.filter = f; renderBulkSheet(); } }
+  function bulkPickShown(on) {
+    if (!bulkState) return;
+    bulkShown(bulkState).forEach(function (e) { if (on) bulkState.picked[e.orderId] = true; else delete bulkState.picked[e.orderId]; });
+    renderBulkSheet();
+  }
+  function bulkShortId(id) { return String(id).replace(/^ORD_\d{4}(\d{2})(\d{2})_/, '$2/$1 #'); }
+  function bulkSheetHtml(st) {
+    var head = '<div class="sheetTitle">☑ Close or cancel several</div>';
+    if (!st.items) return '<div class="sheet fixSheet">' + head + '<div class="sheetHint">' + esc(st.error || 'Loading…') + '</div>' +
+      '<button class="sheetBtn cancel" data-close="1">Close</button></div>';
+    var html = head + '<div class="fixTabs">' + Object.keys(BULK_FILTERS).map(function (k) {
+      return '<button class="fixTab' + (st.filter === k ? ' on' : '') + '" data-filter="' + k + '">' + BULK_FILTERS[k].label + ' (' + st.items.filter(BULK_FILTERS[k].test).length + ')</button>';
+    }).join('') + '</div>';
+    var shown = bulkShown(st);
+    html += '<div class="fixChips"><button class="fixChip" data-all="1">Select all shown</button><button class="fixChip" data-all="0">Clear</button></div>';
+    html += '<div class="bulkList">' + (shown.length ? shown.map(function (e) {
+      var taps = (e.bill ? '🧾' : '') + (e.ready ? '🍳' : '') || '—';
+      return '<label class="bulkRow"><input type="checkbox" data-pick="' + escAttr(e.orderId) + '"' + (st.picked[e.orderId] ? ' checked' : '') + ' />' +
+        '<span><b>' + esc(bulkShortId(e.orderId)) + '</b> · ' + esc(e.seller || '') + ' · ' + esc(e.text) + ' · ' + taps + '</span></label>';
+    }).join('') : '<div class="sheetHint">Nothing in this group.</div>') + '</div>';
+    var n = st.items.filter(function (e) { return st.picked[e.orderId]; }).length;
+    html += '<div class="fixTabs"><button class="fixTab' + (st.action === 'close' ? ' on' : '') + '" data-action="close">✅ Close for staff</button>' +
+      '<button class="fixTab' + (st.action === 'cancel' ? ' on' : '') + '" data-action="cancel">🚫 Cancel</button></div>';
+    html += st.action === 'close'
+      ? '<div class="sheetHint">Marks them delivered at an estimated time (food ready + 7 min, or the promised time when nothing was tapped). The times are an estimate, so no fine is charged to anyone, and the audit says so.</div>'
+      : '<div class="sheetHint">Cancels them: they leave the sales and every fine on them is cancelled. Use it for orders that never happened.</div>';
+    html += '<label class="fixLabel">Reason (required, one for all)</label><textarea class="fixInput" rows="2" data-bulk="reason">' + esc(st.reason) + '</textarea>';
+    if (st.failed.length) html += '<div class="fixError">Not done:<br>' + st.failed.map(function (f) { return esc(bulkShortId(f.orderId) + ' — ' + f.error); }).join('<br>') + '</div>';
+    if (st.error) html += '<div class="fixError">' + esc(st.error) + '</div>';
+    var verb = st.action === 'close' ? 'Close' : 'Cancel';
+    html += '<button class="sheetBtn fixGo" data-go="1"' + (st.busy || !n ? ' disabled' : '') + '>' +
+      (st.busy ? esc(st.progress || 'Saving…') : verb + ' ' + n + (n === 1 ? ' order' : ' orders')) + '</button>' +
+      '<button class="sheetBtn cancel" data-close="1">Close, change nothing</button>';
+    return '<div class="sheet fixSheet">' + html + '</div>';
+  }
+  function renderBulkSheet() {
+    if (!bulkState) { closeBulk(); return; }
+    var el = document.getElementById('bulkSheet');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'bulkSheet';
+      el.className = 'sheetWrap';
+      el.addEventListener('click', bulkClick);
+      el.addEventListener('input', bulkEdit);
+      el.addEventListener('change', bulkEdit);
+      document.body.appendChild(el);
+    }
+    el.innerHTML = bulkSheetHtml(bulkState);
+  }
+  function bulkClick(e) {
+    if (!bulkState || bulkState.busy) return;
+    var t = e.target;
+    if (t.id === 'bulkSheet' || (t.getAttribute && t.getAttribute('data-close'))) { closeBulk(); return; }
+    var b = t.closest ? t.closest('button') : null;
+    if (!b) return;
+    if (b.getAttribute('data-filter')) { bulkSetFilter(b.getAttribute('data-filter')); return; }
+    if (b.getAttribute('data-all') != null) { bulkPickShown(b.getAttribute('data-all') === '1'); return; }
+    if (b.getAttribute('data-action')) { bulkState.action = b.getAttribute('data-action'); bulkState.error = ''; renderBulkSheet(); return; }
+    if (b.getAttribute('data-go')) runBulk();
+  }
+  function bulkEdit(e) {
+    if (!bulkState || !e.target || !e.target.getAttribute) return;
+    var id = e.target.getAttribute('data-pick');
+    if (id) {
+      if (e.target.checked) bulkState.picked[id] = true; else delete bulkState.picked[id];
+      if (e.type === 'change') renderBulkSheet(); // the count on the button
+      return;
+    }
+    if (e.target.getAttribute('data-bulk') === 'reason') bulkState.reason = e.target.value;
+  }
+  function runBulk() {
+    var st = bulkState;
+    if (!st || st.busy) return Promise.resolve();
+    var ids = bulkPickedIds();
+    var reason = String(st.reason || '').trim();
+    if (!ids.length) { st.error = 'Tick at least one order'; renderBulkSheet(); return Promise.resolve(); }
+    if (reason.length < 3) { st.error = 'Write a reason first (at least 3 characters)'; renderBulkSheet(); return Promise.resolve(); }
+    var batches = [];
+    for (var i = 0; i < ids.length; i += BULK_BATCH) batches.push(ids.slice(i, i + BULK_BATCH));
+    st.busy = true; st.error = ''; st.failed = [];
+    var done = 0, action = st.action;
+    var step = function (k) {
+      if (k >= batches.length) return Promise.resolve();
+      st.progress = 'Saving ' + Math.min(ids.length, (k + 1) * BULK_BATCH) + ' / ' + ids.length + '…';
+      renderBulkSheet();
+      var p = creds(); p.action = action; p.orderIds = batches[k]; p.reason = reason;
+      return callApi('fixBulkViaLiff', p).then(function (r) {
+        if (!r || !r.ok) {
+          batches[k].forEach(function (id) { st.failed.push({ orderId: id, error: (r && (r.error || r.reason)) || 'Could not save' }); });
+        } else {
+          done += r.done || 0;
+          (r.failed || []).forEach(function (f) { st.failed.push(f); });
+        }
+        return step(k + 1);
+      }, function (e) {
+        batches.slice(k).forEach(function (b) { b.forEach(function (id) { st.failed.push({ orderId: id, error: String((e && e.message) || 'Could not save') }); }); });
+      });
+    };
+    return step(0).then(function () {
+      var failedIds = {};
+      st.failed.forEach(function (f) { failedIds[f.orderId] = true; });
+      st.items = st.items.filter(function (e) { return !st.picked[e.orderId] || failedIds[e.orderId]; });
+      st.picked = {}; // a ticked order hidden behind another group would be counted on the button
+      st.busy = false; st.progress = '';
+      toast('☑ ' + (action === 'close' ? 'Closed ' : 'Cancelled ') + done + ' of ' + ids.length + (st.failed.length ? ' · ' + st.failed.length + ' not done' : ''), !!st.failed.length);
+      forceRefresh();
+      publishBoardAfterWrite();
+      loadFixQueue();
+      if (!st.failed.length && bulkState === st) closeBulk(); else renderBulkSheet();
+    });
+  }
+  // ---- end v46 bulk fix ----
 
   function cardHtml(r) {
     var title = r.isSell ? (esc(r.buyer) + ' → ' + esc(r.seller)) : esc(r.subtitle);
