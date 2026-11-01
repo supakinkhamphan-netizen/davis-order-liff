@@ -47,10 +47,12 @@ items.push({orderId:'ORD_20261025_03',kind:'photo',text:'photo 11:53 · stamp 12
   eq('no reason: nothing is sent',calls.length,0);
   eq('and the sheet says why',/reason/i.test(run('bulkState.error')),true);
   run("bulkState.reason='การ์ดไม่เข้ากลุ่ม โควตาหมด'");
-  answers=[{ok:true,done:20,failed:[]},{ok:true,done:4,failed:[{orderId:items[24].orderId,error:'Set Food ready too'}]}];
-  await run('runBulk()'); await tick(); await tick();
+  // 1 Nov 2026 19:02: a batch of 20 took ~75 s on the server (3.8 s an order)
+  // and the board gave up at 20 s. Batches are 5 now, with a long timeout.
+  answers=[{ok:true,done:5,failed:[]},{ok:true,done:5,failed:[]},{ok:true,done:5,failed:[]},{ok:true,done:5,failed:[]},{ok:true,done:4,failed:[{orderId:items[24].orderId,error:'Set Food ready too'}]}];
+  await run('runBulk()'); for(let i=0;i<8;i++) await tick();
   const sent=calls.filter(c=>c[0]==='fixBulkViaLiff');
-  eq('sent in batches of 20',sent.map(c=>c[1].orderIds.length),[20,5]);
+  eq('sent in batches of 5',sent.map(c=>c[1].orderIds.length),[5,5,5,5,5]);
   eq('each batch says close and carries the one reason',sent.every(c=>c[1].action==='close'&&c[1].reason==='การ์ดไม่เข้ากลุ่ม โควตาหมด'),true);
   eq('the toast counts what went through',toasts.some(t=>/24/.test(t[0])),true);
   eq('a failure stays on the sheet with its reason',run('bulkState.failed.map(f=>f.orderId)'),[items[24].orderId]);
@@ -59,5 +61,20 @@ items.push({orderId:'ORD_20261025_03',kind:'photo',text:'photo 11:53 · stamp 12
   run("bulkSetFilter('none')"); run('bulkPickShown(true)'); run("bulkState.action='cancel'");
   html=run('bulkSheetHtml(bulkState)');
   eq('cancel says it in the button and warns it leaves the sales',/Cancel 31 orders/.test(html)&&/sales/i.test(html),true);
+  // ---- the connection drops mid-run: the server may still be finishing ----
+  run("bulkSetFilter('all')"); run("bulkState.action='close'"); run('bulkPickShown(true)');
+  const before=run('bulkState.items.length');
+  calls.length=0; toasts.length=0;
+  ctx.callApi=(fn,p)=>{calls.push([fn,JSON.parse(JSON.stringify(p))]);
+    if(fn==='fixBulkViaLiff'&&calls.filter(c=>c[0]==='fixBulkViaLiff').length===2) return Promise.reject(new Error('Fetch is aborted'));
+    if(fn==='fixQueueViaLiff') return Promise.resolve({ok:true,items:items.slice(30,40)});
+    return Promise.resolve({ok:true,done:5,failed:[]});};
+  vm.runInContext('callApi=__c',Object.assign(ctx,{__c:ctx.callApi}));
+  await run('runBulk()'); for(let i=0;i<8;i++) await tick();
+  eq('it stops sending after the drop',calls.filter(c=>c[0]==='fixBulkViaLiff').length,2);
+  eq('no order is claimed "not done" — nobody knows yet',run('bulkState.failed.length'),0);
+  eq('the list is reloaded from the server instead',calls.some(c=>c[0]==='fixQueueViaLiff'&&c[1].all===true)&&run('bulkState.items.length')===10,true);
+  eq('and the sheet says what happened',/timed out|connection/i.test(run('bulkState.error'))&&/reloaded/i.test(run('bulkState.error')),true);
+  eq('nothing is left ticked',run('bulkPickedIds().length'),0);
   process.exit(fails?1:0);
 })();

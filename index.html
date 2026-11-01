@@ -303,7 +303,7 @@
   // ---- fill these two in before publishing ----
   // Bump on every upload. Shown in the header, so "is the phone running the
   // new build?" is answered by looking at the screen instead of guessing.
-  var BUILD = 'v46';
+  var BUILD = 'v47';
   // 2026-09-14: moved to a LINE Login channel under the SAME provider as the
   // Davis Hub bot (Davis BKK BOT). The old app, 2011319750-tMh303eW, lived
   // under a different provider, so every id this page saw was a different id
@@ -368,7 +368,9 @@
     // Hotel wifi drops mid-upload and fetch() then never settles: the promise
     // hangs, the button stays disabled, and the runner is stuck with no way
     // forward. Uploads get longer than reads because they carry photos.
-    var isUpload = /^submitOrder/.test(fn);
+    // fixBulkViaLiff is a write of up to 5 orders at ~3.8 s each (v46 gave up
+    // at 20 s on a batch of 20 while the server kept closing them).
+    var isUpload = /^submitOrder/.test(fn) || fn === 'fixBulkViaLiff';
     // A read that has not answered in 12 s is not coming (the server's own
     // floor is ~2 s); one retry beats sitting on a dead socket for 20 s.
     // Writes are never retried — a second press is a second write.
@@ -1727,7 +1729,9 @@
   // several, close them for staff (the server estimates the times and never
   // fines — fixBulkViaLiff, backend rule 62) or cancel them. At most 20 ids
   // per call; the sheet loops. A sheet outside #list, like the fix panel.
-  var BULK_BATCH = 20;
+  // 5, not 20: the server takes ~3.8 s an order (1 Nov 2026 19:02, 20 in ~75 s)
+  // and a batch must answer well inside its timeout (callApiSend).
+  var BULK_BATCH = 5;
   var bulkState = null; // { items, picked, filter, action, reason, busy, progress, error, failed }
   var BULK_FILTERS = {
     kitchen: { label: 'Kitchen tapped', test: function (e) { return !!e.bill; } },
@@ -1859,10 +1863,29 @@
         }
         return step(k + 1);
       }, function (e) {
-        batches.slice(k).forEach(function (b) { b.forEach(function (id) { st.failed.push({ orderId: id, error: String((e && e.message) || 'Could not save') }); }); });
+        // A dropped or timed-out call says nothing about the server, which
+        // keeps going after the phone stops waiting (1 Nov 2026: "Fetch is
+        // aborted" on 20 orders the server then closed). Stop, and let the
+        // server's own list say what is still open.
+        st.lost = String((e && e.message) || 'no answer');
       });
     };
     return step(0).then(function () {
+      if (st.lost) {
+        var p2 = creds(); p2.all = true;
+        return callApi('fixQueueViaLiff', p2).then(function (r) {
+          if (r && r.ok) st.items = (r.items || []).filter(function (e) { return e.kind === 'open' || e.kind === 'missing'; });
+        }).catch(function () {}).then(function () {
+          st.picked = {}; st.busy = false; st.progress = '';
+          st.error = 'The connection timed out (' + st.lost + ') — the server may still be finishing. The list was reloaded from the server: orders already closed have left it. Wait a minute, then reopen this to see the rest.';
+          st.lost = '';
+          toast('☑ ' + done + ' confirmed · connection timed out, list reloaded', true);
+          forceRefresh();
+          publishBoardAfterWrite();
+          loadFixQueue();
+          if (bulkState === st) renderBulkSheet();
+        });
+      }
       var failedIds = {};
       st.failed.forEach(function (f) { failedIds[f.orderId] = true; });
       st.items = st.items.filter(function (e) { return !st.picked[e.orderId] || failedIds[e.orderId]; });
